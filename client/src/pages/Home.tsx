@@ -5,7 +5,10 @@
  */
 import OrbLogo from "@/components/OrbLogo";
 import { Button } from "@/components/ui/button";
-import { useAuth } from "@/_core/hooks/useAuth";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useOrbAuth } from "@/contexts/OrbAuthContext";
+import { buildDisputeResolution, canFinalizeTeacherReview } from "@/lib/adminOperations";
+import { ApiDispute, ApiLesson, ApiNotification, ApiPayout, ApiSupportTicket, ApiUser, fullName, initials, orbApi } from "@/lib/orbApi";
 import {
   Table,
   TableBody,
@@ -27,6 +30,7 @@ import {
   CircleUserRound,
   Clock3,
   FileCheck2,
+  ExternalLink,
   GraduationCap,
   LayoutDashboard,
   LifeBuoy,
@@ -43,19 +47,22 @@ import {
   WalletCards,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type NavigationKey =
   | "dashboard"
   | "teachers"
   | "students"
   | "issues"
+  | "disputes"
   | "payouts"
+  | "support"
+  | "notifications"
   | "admins"
   | "settings";
 
 type Teacher = {
-  id: number;
+  id: string;
   name: string;
   subject: string;
   city: string;
@@ -64,62 +71,20 @@ type Teacher = {
   submitted: string;
   documents: number;
   status: "pending" | "approved" | "rejected";
+  certificate?: string;
+  email?: string;
 };
 
 const navigation = [
   { id: "dashboard" as const, label: "نظرة عامة", icon: LayoutDashboard },
-  { id: "teachers" as const, label: "المدرسون", icon: GraduationCap, count: "12" },
+  { id: "teachers" as const, label: "المدرسون", icon: GraduationCap },
   { id: "students" as const, label: "الطلاب", icon: Users },
-  { id: "issues" as const, label: "الدروس محل المراجعة", icon: TriangleAlert, count: "4" },
-  { id: "payouts" as const, label: "التحويلات المالية", icon: WalletCards, count: "7" },
+  { id: "issues" as const, label: "الدروس محل المراجعة", icon: TriangleAlert },
+  { id: "disputes" as const, label: "النزاعات", icon: CircleDollarSign },
+  { id: "payouts" as const, label: "التحويلات المالية", icon: WalletCards },
+  { id: "support" as const, label: "طلبات الدعم", icon: LifeBuoy },
+  { id: "notifications" as const, label: "الإشعارات", icon: Bell },
   { id: "admins" as const, label: "فريق الإدارة", icon: ShieldCheck },
-];
-
-const initialTeachers: Teacher[] = [
-  {
-    id: 1,
-    name: "ندى حسان",
-    subject: "لغة عربية · ثانوي",
-    city: "القاهرة",
-    initials: "نح",
-    tone: "bg-[#E9D8C6] text-[#70442E]",
-    submitted: "منذ 18 دقيقة",
-    documents: 4,
-    status: "pending",
-  },
-  {
-    id: 2,
-    name: "أحمد صبري",
-    subject: "رياضيات · إعدادي",
-    city: "الإسكندرية",
-    initials: "أص",
-    tone: "bg-[#D8E5F6] text-[#1E5D9A]",
-    submitted: "منذ ساعة",
-    documents: 3,
-    status: "pending",
-  },
-  {
-    id: 3,
-    name: "سارة عمرو",
-    subject: "كيمياء · ثانوي",
-    city: "المنصورة",
-    initials: "سع",
-    tone: "bg-[#DDF0E8] text-[#1C7152]",
-    submitted: "أمس، 4:35 م",
-    documents: 5,
-    status: "pending",
-  },
-  {
-    id: 4,
-    name: "حسام علي",
-    subject: "فيزياء · ثانوي",
-    city: "الجيزة",
-    initials: "حع",
-    tone: "bg-[#EEE1F8] text-[#714097]",
-    submitted: "أمس، 2:10 م",
-    documents: 4,
-    status: "pending",
-  },
 ];
 
 const iconButtonClass =
@@ -195,7 +160,7 @@ function KpiCard({
         <div className={`grid h-10 w-10 place-items-center rounded-xl ${accents[accent]}`}>
           <Icon size={20} strokeWidth={1.9} />
         </div>
-        <span className="text-[10px] font-semibold text-[#6E7B8E]">آخر 7 أيام</span>
+        <span className="text-[10px] font-semibold text-[#6E7B8E]">البيانات الحالية</span>
       </div>
       <p className="mt-5 text-xs font-medium text-[#647386]">{label}</p>
       <p dir="ltr" className="mt-1.5 text-right font-display text-[30px] font-bold tracking-[-0.06em] text-[#102A4B]">
@@ -225,22 +190,99 @@ function EmptySection({ section }: { section: string }) {
         </div>
         <h2 className="font-display mt-5 text-2xl font-bold text-[#102A4B]">{section}</h2>
         <p className="mx-auto mt-3 max-w-md text-xs leading-7 text-[#6B798A]">
-          هذا القسم جاهز بصرياً ضمن هيكل لوحة ORB. سيتم ربطه بمسارات الـ API الفعلية في المرحلة التالية من التكامل.
+          لا يوفر ORB API الحالي مسار إعدادات لهذا القسم. أبقيناه كحالة واضحة بدلاً من زر لا ينفذ إجراءً حقيقياً.
         </p>
-        <Button onClick={() => toast.info("هذه معاينة للواجهة الأمامية؛ لا يوجد ربط بيانات حالياً.")} className="mt-6 bg-[#1769D5] text-white hover:bg-[#0F56B4]">
-          عرض تفاصيل التكامل
-        </Button>
       </div>
     </section>
   );
 }
 
 export default function Home() {
-  const { user, logout } = useAuth();
+  const { user, token, logout } = useOrbAuth();
   const [activeView, setActiveView] = useState<NavigationKey>("dashboard");
-  const [teachers, setTeachers] = useState<Teacher[]>(initialTeachers);
+  const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [allTeachers, setAllTeachers] = useState<Teacher[]>([]);
+  const [students, setStudents] = useState<ApiUser[]>([]);
+  const [admins, setAdmins] = useState<ApiUser[]>([]);
+  const [teacherTotal, setTeacherTotal] = useState(0);
+  const [studentTotal, setStudentTotal] = useState(0);
+  const [issues, setIssues] = useState<ApiLesson[]>([]);
+  const [disputes, setDisputes] = useState<ApiDispute[]>([]);
+  const [payouts, setPayouts] = useState<ApiPayout[]>([]);
+  const [supportTickets, setSupportTickets] = useState<ApiSupportTicket[]>([]);
+  const [notifications, setNotifications] = useState<ApiNotification[]>([]);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
+  const [reviewingTeacher, setReviewingTeacher] = useState<string | null>(null);
+  const [selectedTeacher, setSelectedTeacher] = useState<Teacher | null>(null);
+  const [teacherReviewNote, setTeacherReviewNote] = useState("");
+  const [selectedDispute, setSelectedDispute] = useState<ApiDispute | null>(null);
+  const [disputeDecision, setDisputeDecision] = useState<"refund" | "release" | "partial">("refund");
+  const [refundAmount, setRefundAmount] = useState("");
+  const [resolvingDispute, setResolvingDispute] = useState(false);
+  const [updatingTicket, setUpdatingTicket] = useState<string | null>(null);
+  const [markingNotification, setMarkingNotification] = useState<string | null>(null);
+  const [selectedStudent, setSelectedStudent] = useState<ApiUser | null>(null);
+  const [nextStudentStatus, setNextStudentStatus] = useState<"active" | "inactive" | "banned">("active");
+  const [updatingStudent, setUpdatingStudent] = useState(false);
+  const [selectedPayout, setSelectedPayout] = useState<ApiPayout | null>(null);
+  const [completingPayout, setCompletingPayout] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
+
+  const mapTeacher = useCallback((teacher: ApiUser, index: number): Teacher => {
+    const name = fullName(teacher);
+    const palette = ["bg-[#E9D8C6] text-[#70442E]", "bg-[#D8E5F6] text-[#1E5D9A]", "bg-[#DDF0E8] text-[#1C7152]", "bg-[#EEE1F8] text-[#714097]"];
+    const subjects = teacher.teacherProfile?.subjects?.filter(Boolean).join(" · ") || "المجال غير محدد";
+    const stages = teacher.teacherProfile?.academic_stages?.filter(Boolean).join(" · ");
+    return {
+      id: teacher._id,
+      name,
+      subject: stages ? `${subjects} · ${stages}` : subjects,
+      city: teacher.teacherProfile?.education_system || teacher.email || "—",
+      initials: initials(name),
+      tone: palette[index % palette.length],
+      submitted: teacher.createdAt ? new Date(teacher.createdAt).toLocaleDateString("ar-EG", { day: "numeric", month: "short" }) : "—",
+      documents: teacher.teacherProfile?.certificate ? 1 : 0,
+      status: (teacher.teacherProfile?.verificationStatus as Teacher["status"]) || "pending",
+      certificate: teacher.teacherProfile?.certificate,
+      email: teacher.email,
+    };
+  }, []);
+
+  const loadDashboardData = useCallback(async () => {
+    if (!token) return;
+    setDataLoading(true);
+    setDataError(null);
+    try {
+      const [pendingResponse, allTeachersResponse, studentsResponse, issuesResponse, disputesResponse, payoutsResponse, supportResponse, notificationsResponse, adminsResponse] = await Promise.all([
+        orbApi<ApiUser[]>("/admin/teachers/pending", { token }),
+        orbApi<ApiUser[]>("/admin/teachers/all", { token }),
+        orbApi<ApiUser[]>("/admin/students/all", { token }),
+        orbApi<ApiLesson[]>("/admin/lessons/issues", { token }),
+        orbApi<ApiDispute[]>("/disputes", { token }),
+        orbApi<ApiPayout[]>("/payouts", { token }),
+        orbApi<ApiSupportTicket[]>("/support", { token }),
+        orbApi<ApiNotification[]>("/notifications/all", { token }),
+        orbApi<ApiUser[]>("/admin", { token }),
+      ]);
+      setTeachers((pendingResponse.data ?? []).map(mapTeacher));
+      setAllTeachers((allTeachersResponse.data ?? []).map(mapTeacher));
+      setStudents(studentsResponse.data ?? []);
+      setAdmins(adminsResponse.data ?? []);
+      setTeacherTotal(allTeachersResponse.data?.length ?? allTeachersResponse.results ?? 0);
+      setStudentTotal(studentsResponse.data?.length ?? studentsResponse.results ?? 0);
+      setIssues(issuesResponse.data ?? []);
+      setDisputes(disputesResponse.data ?? []);
+      setPayouts(payoutsResponse.data ?? []);
+      setSupportTickets(supportResponse.data ?? []);
+      setNotifications(notificationsResponse.data ?? []);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : "تعذر تحميل بيانات لوحة ORB.");
+    } finally { setDataLoading(false); }
+  }, [mapTeacher, token]);
+
+  useEffect(() => { void loadDashboardData(); }, [loadDashboardData]);
 
   const pendingTeachers = useMemo(
     () =>
@@ -252,10 +294,85 @@ export default function Home() {
     [query, teachers],
   );
 
-  const reviewTeacher = (id: number, status: "approved" | "rejected") => {
+  const reviewTeacher = async (id: string, status: "approved" | "rejected") => {
     const teacher = teachers.find((item) => item.id === id);
-    setTeachers((current) => current.map((item) => (item.id === id ? { ...item, status } : item)));
-    toast.success(status === "approved" ? `تم اعتماد ${teacher?.name}` : `تم رفض طلب ${teacher?.name}`);
+    if (!token || !teacher) return;
+    setReviewingTeacher(id);
+    try {
+      await orbApi<ApiUser>(`/admin/teachers/${status === "approved" ? "verify" : "reject"}/${id}`, {
+        token,
+        method: "PUT",
+        body: status === "rejected" ? { reason: teacherReviewNote.trim() } : undefined,
+      });
+      toast.success(status === "approved" ? `تم اعتماد ${teacher.name}` : `تم رفض طلب ${teacher.name}`);
+      setSelectedTeacher(null);
+      setTeacherReviewNote("");
+      await loadDashboardData();
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر تحديث حالة المدرس."); }
+    finally { setReviewingTeacher(null); }
+  };
+
+  const resolveDispute = async () => {
+    if (!token || !selectedDispute) return;
+    const resolution = buildDisputeResolution(disputeDecision, refundAmount);
+    if (!resolution) {
+      toast.error("أدخلي مبلغ الاسترداد الجزئي أولاً.");
+      return;
+    }
+    setResolvingDispute(true);
+    try {
+      await orbApi<{ success: boolean }>("/disputes/resolve", { token, method: "POST", body: { disputeId: selectedDispute._id, ...resolution } });
+      toast.success("تم تسجيل قرار حل النزاع وإرسال التحديث إلى الأطراف.");
+      setSelectedDispute(null);
+      setRefundAmount("");
+      await loadDashboardData();
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حل النزاع."); }
+    finally { setResolvingDispute(false); }
+  };
+
+  const updateSupportTicket = async (ticket: ApiSupportTicket, nextStatus: "open" | "closed") => {
+    if (!token) return;
+    setUpdatingTicket(ticket._id);
+    try {
+      await orbApi<ApiSupportTicket>(`/support/${ticket._id}/${nextStatus === "closed" ? "close" : "reopen"}`, { token, method: "PUT" });
+      toast.success(nextStatus === "closed" ? "تم إغلاق تذكرة الدعم." : "تمت إعادة فتح تذكرة الدعم.");
+      await loadDashboardData();
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر تحديث تذكرة الدعم."); }
+    finally { setUpdatingTicket(null); }
+  };
+
+  const markNotificationRead = async (notification: ApiNotification) => {
+    if (!token || notification.read) return;
+    setMarkingNotification(notification._id);
+    try {
+      await orbApi<ApiNotification>(`/notifications/read/${notification._id}`, { token, method: "PUT" });
+      setNotifications((current) => current.map((item) => item._id === notification._id ? { ...item, read: true } : item));
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر تحديث الإشعار."); }
+    finally { setMarkingNotification(null); }
+  };
+
+  const updateStudentStatus = async () => {
+    if (!token || !selectedStudent) return;
+    setUpdatingStudent(true);
+    try {
+      await orbApi<ApiUser>(`/admin/users/${selectedStudent._id}/status`, { token, method: "PATCH", body: { status: nextStudentStatus } });
+      toast.success("تم تحديث حالة حساب الطالب.");
+      setSelectedStudent(null);
+      await loadDashboardData();
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر تحديث حالة الطالب."); }
+    finally { setUpdatingStudent(false); }
+  };
+
+  const completePayout = async () => {
+    if (!token || !selectedPayout) return;
+    setCompletingPayout(true);
+    try {
+      await orbApi<ApiPayout>(`/payouts/${selectedPayout._id}/complete`, { token, method: "PATCH" });
+      toast.success("تم تأكيد التحويل وتحديث حالته.");
+      setSelectedPayout(null);
+      await loadDashboardData();
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر إتمام التحويل."); }
+    finally { setCompletingPayout(false); }
   };
 
   const changeView = (view: NavigationKey) => {
@@ -264,8 +381,17 @@ export default function Home() {
   };
 
   const activeTitle = navigation.find((item) => item.id === activeView)?.label ?? "نظرة عامة";
-  const adminName = user?.name?.trim() || "منى زكريا";
+  const adminName = fullName(user);
   const adminInitial = adminName.charAt(0);
+  const navigationCount = (id: NavigationKey) => {
+    if (id === "teachers") return teachers.length;
+    if (id === "issues") return issues.length;
+    if (id === "disputes") return disputes.filter((dispute) => dispute.status !== "resolved").length;
+    if (id === "payouts") return payouts.filter((payout) => payout.status !== "completed").length;
+    if (id === "support") return supportTickets.filter((ticket) => ticket.status !== "closed").length;
+    if (id === "notifications") return notifications.filter((notification) => !notification.read).length;
+    return 0;
+  };
 
   return (
     <div dir="rtl" className="min-h-screen bg-[#F6F9FC] text-[#1E3858]">
@@ -291,9 +417,9 @@ export default function Home() {
               >
                 <Icon size={19} strokeWidth={isActive ? 2.3 : 1.8} />
                 <span className="flex-1">{item.label}</span>
-                {item.count && (
+                {navigationCount(item.id) > 0 && (
                   <span className={`rounded-full px-2 py-0.5 text-[10px] ${isActive ? "bg-white text-[#1769D5]" : "bg-[#F0F4F8] text-[#7A8999]"}`}>
-                    {item.count}
+                    {navigationCount(item.id)}
                   </span>
                 )}
               </button>
@@ -305,7 +431,7 @@ export default function Home() {
             <Settings2 size={19} strokeWidth={1.8} />
             <span>الإعدادات</span>
           </button>
-          <button type="button" onClick={() => toast.info("مركز المساعدة سيكون متاحاً بعد ربط الخدمات.")} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-xs font-semibold text-[#627286] transition hover:bg-[#F5F8FC] hover:text-[#1769D5]">
+          <button type="button" onClick={() => changeView("support")} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-xs font-semibold text-[#627286] transition hover:bg-[#F5F8FC] hover:text-[#1769D5]">
             <CircleHelp size={19} strokeWidth={1.8} />
             <span>المساعدة والدعم</span>
           </button>
@@ -346,12 +472,12 @@ export default function Home() {
               <OrbLogo showLabel={false} imageClassName="h-9 w-9" />
             </div>
             <div className="hidden lg:block">
-              <p className="text-[10px] font-semibold tracking-[0.15em] text-[#91A0B2]">السبت، 15 أغسطس 2026</p>
+              <p className="text-[10px] font-semibold tracking-[0.15em] text-[#91A0B2]">{new Date().toLocaleDateString("ar-EG", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p>
               <p className="mt-1 font-display text-sm font-bold text-[#425672]">{activeTitle}</p>
             </div>
             <div className="mr-auto flex items-center gap-2 sm:gap-3">
-              <button type="button" aria-label="البحث" onClick={() => toast.info("ابحثي باسم المستخدم أو الدرس بعد ربط البيانات.")} className={`${iconButtonClass} hidden sm:grid`}><Search size={19} /></button>
-              <button type="button" aria-label="الإشعارات" onClick={() => toast.info("لديك 4 إشارات تشغيلية جديدة اليوم.")} className={`${iconButtonClass} relative`}><Bell size={19} /><span className="absolute left-2 top-2 h-1.5 w-1.5 rounded-full bg-[#F0AA1A] ring-2 ring-white" /></button>
+              <button type="button" aria-label="البحث في طلبات المدرسين" onClick={() => changeView("teachers")} className={`${iconButtonClass} hidden sm:grid`}><Search size={19} /></button>
+              <button type="button" aria-label="الإشعارات" onClick={() => changeView("notifications")} className={`${iconButtonClass} relative`}><Bell size={19} />{notifications.some((notification) => !notification.read) && <span className="absolute left-2 top-2 h-1.5 w-1.5 rounded-full bg-[#F0AA1A] ring-2 ring-white" />}</button>
               <div className="hidden items-center gap-2 border-r border-[#DFE7F0] pr-3 sm:flex">
                 <div className="text-left leading-tight">
                   <p className="text-[11px] font-bold text-[#243B59]">{adminName}</p>
@@ -366,6 +492,7 @@ export default function Home() {
         <div className="mx-auto max-w-[1560px] px-4 pb-28 pt-7 sm:px-7 sm:pt-9 lg:px-10 lg:pb-10">
           {activeView === "dashboard" ? (
             <section className="space-y-7">
+              {dataError && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#F5C8CE] bg-[#FFF6F7] px-4 py-3 text-xs text-[#9B2634]"><span>تعذر تحميل بيانات ORB: {dataError}</span><button type="button" onClick={() => void loadDashboardData()} className="font-bold underline">إعادة المحاولة</button></div>}
               <div className="orb-enter relative overflow-hidden rounded-[26px] bg-[#102A4B] p-6 text-white sm:p-8 lg:p-10">
                 <div className="absolute inset-y-0 left-0 hidden w-[48%] lg:block">
                   <img src="/manus-storage/orb-operations-hero_08667843.jpg" alt="نظام ORB التعليمي" className="h-full w-full object-cover opacity-90 mix-blend-screen" />
@@ -377,10 +504,10 @@ export default function Home() {
                     ملخص تشغيل اليوم
                   </div>
                   <h1 className="font-display mt-5 text-balance text-[30px] font-bold leading-[1.35] tracking-[-0.025em] sm:text-[38px]">
-                    صباح الخير، منى.<br />ثلاث إشارات تحتاج قرارك اليوم.
+                    صباح الخير، {adminName}.<br />بيانات تشغيل ORB بين يديك الآن.
                   </h1>
                   <p className="mt-4 max-w-xl text-xs leading-7 text-[#B7CAE2] sm:text-[13px]">
-                    طلبات تحقق جديدة، دروس معلّقة للمراجعة، وتحويلات جاهزة للإتمام. رتّبي يومك من النقاط التي تؤثر في تجربة الطلاب والمعلمين مباشرة.
+                    راجعي طلبات التحقق والدروس قيد المراجعة والتحويلات المسترجعة مباشرة من باك إند ORB.
                   </p>
                   <div className="mt-7 flex flex-wrap gap-3">
                     <Button onClick={() => changeView("teachers")} className="bg-[#F4B942] px-5 text-xs font-bold text-[#102A4B] shadow-none hover:bg-[#FFD16C]">
@@ -393,9 +520,9 @@ export default function Home() {
                 </div>
                 <div className="relative mt-8 grid grid-cols-3 divide-x divide-x-reverse divide-white/15 border-t border-white/12 pt-5 lg:mt-10 lg:max-w-xl">
                   {[
-                    ["12", "طلبات تحقق"],
-                    ["4", "حالات تحتاج مراجعة"],
-                    ["7", "تحويلات معلّقة"],
+                    [String(teachers.length), "طلبات تحقق"],
+                    [String(issues.length), "دروس تحتاج مراجعة"],
+                    [String(payouts.filter((payout) => payout.status !== "completed").length), "تحويلات معلّقة"],
                   ].map(([value, label]) => (
                     <div key={label} className="px-3 first:pr-0">
                       <p dir="ltr" className="font-display text-right text-2xl font-bold tracking-[-0.05em] text-white">{value}</p>
@@ -406,10 +533,10 @@ export default function Home() {
               </div>
 
               <section className="orb-enter orb-enter-delay-1 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <KpiCard label="إجمالي المدرسين" value="248" support="8 تم اعتمادهم هذا الأسبوع" icon={GraduationCap} accent="blue" />
-                <KpiCard label="الطلاب النشطون" value="4,830" support="+4.2% مقارنة بالأسبوع الماضي" icon={Users} accent="teal" />
-                <KpiCard label="دروس هذا الأسبوع" value="1,926" support="87% مكتملة في الوقت" icon={BookOpenText} accent="gold" />
-                <KpiCard label="طلبات الدعم المفتوحة" value="18" support="4 منها بانتظار قرار إداري" icon={LifeBuoy} accent="blue" />
+                <KpiCard label="إجمالي المدرسين" value={String(teacherTotal)} support="من بيانات ORB الحالية" icon={GraduationCap} accent="blue" />
+                <KpiCard label="إجمالي الطلاب" value={String(studentTotal)} support="من بيانات ORB الحالية" icon={Users} accent="teal" />
+                <KpiCard label="دروس قيد المراجعة" value={String(issues.length)} support="مشكلات أو نزاعات مسجلة" icon={BookOpenText} accent="gold" />
+                <KpiCard label="تحويلات معلّقة" value={String(payouts.filter((payout) => payout.status !== "completed").length)} support="من سجل التحويلات" icon={WalletCards} accent="blue" />
               </section>
 
               <section className="orb-enter orb-enter-delay-2 grid gap-6 xl:grid-cols-[minmax(0,1.56fr)_minmax(320px,0.85fr)]">
@@ -438,7 +565,7 @@ export default function Home() {
                           <TableHead className="text-right text-[10px] text-[#8492A2]">المجال</TableHead>
                           <TableHead className="text-right text-[10px] text-[#8492A2]">الوثائق</TableHead>
                           <TableHead className="text-right text-[10px] text-[#8492A2]">وصل في</TableHead>
-                          <TableHead className="w-[165px] text-center text-[10px] text-[#8492A2]">الإجراء</TableHead>
+                          <TableHead className="w-[165px] text-center text-[10px] text-[#8492A2]">المراجعة</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -454,10 +581,7 @@ export default function Home() {
                             <TableCell className="py-3.5 text-right"><StatusPill tone="blue"><FileCheck2 size={12} />{teacher.documents} ملفات</StatusPill></TableCell>
                             <TableCell className="py-3.5 text-right text-[10px] text-[#718195]">{teacher.submitted}</TableCell>
                             <TableCell className="py-3.5 text-center">
-                              <div className="flex justify-center gap-1.5">
-                                <button type="button" onClick={() => reviewTeacher(teacher.id, "approved")} className="inline-flex items-center gap-1.5 rounded-lg bg-[#E3F6EE] px-2.5 py-2 text-[10px] font-bold text-[#147255] transition hover:bg-[#CFF0E3] active:scale-[0.97]"><Check size={13} />اعتماد</button>
-                                <button type="button" onClick={() => reviewTeacher(teacher.id, "rejected")} className="inline-flex items-center gap-1.5 rounded-lg bg-[#FBEDEF] px-2.5 py-2 text-[10px] font-bold text-[#AF3240] transition hover:bg-[#F9DDE1] active:scale-[0.97]"><X size={13} />رفض</button>
-                              </div>
+                              <button type="button" onClick={() => setSelectedTeacher(teacher)} className="inline-flex items-center gap-1.5 rounded-lg border border-[#CFE0F5] bg-[#F7FAFE] px-3 py-2 text-[10px] font-bold text-[#1769D5] transition hover:bg-[#EAF2FF]"><FileCheck2 size={13} />مراجعة الشهادة</button>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -469,11 +593,11 @@ export default function Home() {
                       <div key={teacher.id} className="rounded-2xl border border-[#E7EDF4] p-3.5">
                         <div className="flex items-start justify-between gap-2"><MiniAvatar teacher={teacher} /><StatusPill tone="blue">{teacher.documents} ملفات</StatusPill></div>
                         <p className="mt-3 text-xs font-bold text-[#233B59]">{teacher.name}</p><p className="mt-1 text-[10px] text-[#728196]">{teacher.subject} · {teacher.city}</p>
-                        <div className="mt-3 flex gap-2"><button type="button" onClick={() => reviewTeacher(teacher.id, "approved")} className="flex-1 rounded-lg bg-[#E3F6EE] py-2 text-[10px] font-bold text-[#147255]">اعتماد</button><button type="button" onClick={() => reviewTeacher(teacher.id, "rejected")} className="flex-1 rounded-lg bg-[#FBEDEF] py-2 text-[10px] font-bold text-[#AF3240]">رفض</button></div>
+                        <button type="button" onClick={() => setSelectedTeacher(teacher)} className="mt-3 w-full rounded-lg border border-[#CFE0F5] bg-[#F7FAFE] py-2 text-[10px] font-bold text-[#1769D5]">مراجعة الشهادة والقرار</button>
                       </div>
                     ))}
                   </div>
-                  {pendingTeachers.length === 0 && <div className="p-8 text-center text-xs text-[#718195]">لا توجد طلبات مطابقة للبحث.</div>}
+                  {dataLoading ? <div className="p-8 text-center text-xs text-[#718195]">جارٍ تحميل طلبات التحقق من ORB…</div> : pendingTeachers.length === 0 && <div className="p-8 text-center text-xs text-[#718195]">لا توجد طلبات تحقق مطابقة للبحث.</div>}
                 </article>
 
                 <aside className="space-y-6">
@@ -481,8 +605,8 @@ export default function Home() {
                     <img src="/manus-storage/orb-approval-illustration_0fbc4396.jpg" alt="مراجعة طلب انضمام مدرس" className="absolute inset-y-0 left-0 w-[47%] object-cover opacity-20" />
                     <div className="relative">
                       <div className="flex items-center justify-between"><span className="grid h-9 w-9 place-items-center rounded-xl bg-[#FFF4D7] text-[#B87900]"><Clock3 size={18} /></span><StatusPill tone="gold">أولوية اليوم</StatusPill></div>
-                      <h3 className="font-display mt-5 max-w-[230px] text-xl font-bold leading-8 text-[#102A4B]">12 طلب تحقق تنتظر المراجعة</h3>
-                      <p className="mt-2 max-w-[240px] text-[11px] leading-6 text-[#6D7C8F]">تجنّبي تأخر التفعيل: أقدم طلب وصل منذ يومين.</p>
+                      <h3 className="font-display mt-5 max-w-[230px] text-xl font-bold leading-8 text-[#102A4B]">{teachers.length} طلب تحقق ينتظر المراجعة</h3>
+                      <p className="mt-2 max-w-[240px] text-[11px] leading-6 text-[#6D7C8F]">هذا الرقم مسترجع مباشرة من الطلبات المعلّقة في ORB.</p>
                       <button type="button" onClick={() => changeView("teachers")} className="mt-5 inline-flex items-center gap-2 text-[11px] font-bold text-[#1769D5] transition hover:gap-3">افتحي قائمة المدرسين <ArrowUpLeft size={15} /></button>
                     </div>
                   </article>
@@ -490,14 +614,8 @@ export default function Home() {
                   <article className="overflow-hidden rounded-3xl border border-[#E5EBF2] bg-white soft-shadow">
                     <div className="flex items-center justify-between px-5 pb-3 pt-5"><h3 className="font-display text-base font-bold text-[#102A4B]">حالات تحتاج متابعة</h3><button type="button" onClick={() => changeView("issues")} className="text-[10px] font-bold text-[#1769D5]">عرض الكل</button></div>
                     <div className="divide-y divide-[#EDF2F7]">
-                      {[
-                        ["نزاع درس: جبر 2", "بانتظار قرار إداري", "red", TriangleAlert],
-                        ["دفعة رقم #48219", "فشل تأكيد التحويل", "gold", CircleDollarSign],
-                        ["درس كيمياء عضوية", "غير مكتمل تلقائياً", "blue", BookOpenText],
-                      ].map(([title, detail, tone, Icon], index) => {
-                        const IssueIcon = Icon as typeof TriangleAlert;
-                        return <button key={String(title)} type="button" onClick={() => changeView(index === 1 ? "payouts" : "issues")} className="flex w-full items-center gap-3 px-5 py-4 text-right transition hover:bg-[#FAFCFE]"><div className={`grid h-9 w-9 place-items-center rounded-xl ${tone === "red" ? "bg-[#FDEBEC] text-[#B12D3B]" : tone === "gold" ? "bg-[#FFF4D6] text-[#A76D00]" : "bg-[#E8F1FF] text-[#1769D5]"}`}><IssueIcon size={16} /></div><div className="flex-1"><p className="text-[11px] font-bold text-[#304763]">{title as string}</p><p className="mt-1 text-[9px] text-[#8391A1]">{detail as string}</p></div><ChevronLeft size={15} className="text-[#9AA7B5]" /></button>;
-                      })}
+                      {issues.slice(0, 3).map((issue) => <button key={issue._id} type="button" onClick={() => changeView("issues")} className="flex w-full items-center gap-3 px-5 py-4 text-right transition hover:bg-[#FAFCFE]"><div className={`grid h-9 w-9 place-items-center rounded-xl ${issue.disputeFlag ? "bg-[#FDEBEC] text-[#B12D3B]" : "bg-[#E8F1FF] text-[#1769D5]"}`}><TriangleAlert size={16} /></div><div className="flex-1"><p className="text-[11px] font-bold text-[#304763]">{issue.title || "درس بلا عنوان"}</p><p className="mt-1 text-[9px] text-[#8391A1]">{issue.reviewStatus || issue.finalCompletionStatus || issue.status || "قيد المراجعة"}</p></div><ChevronLeft size={15} className="text-[#9AA7B5]" /></button>)}
+                      {!dataLoading && issues.length === 0 && <p className="px-5 py-6 text-center text-[11px] text-[#8391A1]">لا توجد حالات تحتاج متابعة.</p>}
                     </div>
                   </article>
                 </aside>
@@ -505,24 +623,34 @@ export default function Home() {
 
               <section className="orb-enter orb-enter-delay-3 grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
                 <article className="rounded-3xl border border-[#E5EBF2] bg-white p-5 soft-shadow sm:p-6">
-                  <div className="flex items-center justify-between"><div><p className="text-[10px] font-bold tracking-[0.13em] text-[#1769D5]">نبض المنصة</p><h3 className="font-display mt-2 text-lg font-bold text-[#102A4B]">نمو النشاط خلال الأسبوع</h3></div><button type="button" onClick={() => toast.info("التقارير التفصيلية ستُقرأ من بيانات الدروس لاحقاً.")} className="rounded-lg border border-[#E2EAF3] px-3 py-2 text-[10px] font-bold text-[#5D6D80] hover:bg-[#F6F9FC]">آخر 7 أيام</button></div>
-                  <div className="mt-8 flex h-40 items-end justify-between gap-2 border-b border-dashed border-[#DCE6F0] pb-2 sm:gap-3">
-                    {[40, 52, 44, 68, 59, 83, 72].map((height, index) => <div key={height} className="group relative flex flex-1 flex-col items-center justify-end"><div className={`w-full max-w-[48px] rounded-t-lg transition-all duration-200 group-hover:-translate-y-1 ${index === 5 ? "bg-[#1769D5]" : "bg-[#D8E6F6]"}`} style={{ height: `${height}%` }}><span className="sr-only">{height}%</span></div><span className="mt-3 text-[9px] text-[#8391A1]">{["س", "ح", "ن", "ث", "ر", "خ", "ج"][index]}</span></div>)}
-                  </div>
-                  <div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-[10px] text-[#718095]"><span className="inline-flex items-center gap-2"><i className="h-2 w-2 rounded-full bg-[#1769D5]" />طلبات الدروس</span><span className="inline-flex items-center gap-2"><i className="h-2 w-2 rounded-full bg-[#D8E6F6]" />مقارنة بالأيام السابقة</span></div>
+                  <div><p className="text-[10px] font-bold tracking-[0.13em] text-[#1769D5]">نبض المنصة</p><h3 className="font-display mt-2 text-lg font-bold text-[#102A4B]">لقطة تشغيلية حية</h3></div>
+                  <div className="mt-7 grid gap-3 sm:grid-cols-3"><div className="rounded-2xl bg-[#EAF2FF] p-4"><p className="text-[10px] text-[#59718D]">طلبات تحقق</p><p className="mt-2 text-2xl font-bold text-[#1769D5]">{teachers.length}</p></div><div className="rounded-2xl bg-[#FFF4D7] p-4"><p className="text-[10px] text-[#7B6A45]">دروس للمراجعة</p><p className="mt-2 text-2xl font-bold text-[#A76D00]">{issues.length}</p></div><div className="rounded-2xl bg-[#E1F5EE] p-4"><p className="text-[10px] text-[#4B786A]">تحويلات معلّقة</p><p className="mt-2 text-2xl font-bold text-[#127054]">{payouts.filter((payout) => payout.status !== "completed").length}</p></div></div>
+                  <p className="mt-5 text-[10px] leading-6 text-[#718095]">لا يقدم ORB API الحالي سلسلة زمنية يومية؛ لذلك تعرض هذه المساحة مؤشرات التشغيل الفعلية المتاحة الآن بدلاً من رسم تقديري.</p>
                 </article>
                 <article className="relative min-h-[245px] overflow-hidden rounded-3xl bg-[#EAF2FF] p-6">
                   <img src="/manus-storage/orb-resources-illustration_552a2a10.jpg" alt="موارد تعليمية" className="absolute inset-y-0 left-0 w-[48%] object-cover mix-blend-multiply opacity-85" />
-                  <div className="relative max-w-[58%]"><StatusPill tone="blue">خريطة المواد</StatusPill><h3 className="font-display mt-4 text-xl font-bold leading-8 text-[#102A4B]">أفضل المواد طلباً هذا الأسبوع</h3><p className="mt-2 text-[10px] leading-6 text-[#5D718C]">رياضيات، عربي، وكيمياء تقود النشاط على المنصة.</p><button type="button" onClick={() => toast.info("تصفية المواد ستتوفر بعد ربط بيانات الدروس.")} className="mt-4 inline-flex items-center gap-2 text-[10px] font-bold text-[#1769D5]">استكشفي الحركة <ChevronLeft size={14} /></button></div>
+                  <div className="relative max-w-[58%]"><StatusPill tone="blue">مصدر البيانات</StatusPill><h3 className="font-display mt-4 text-xl font-bold leading-8 text-[#102A4B]">اتصال Railway نشط</h3><p className="mt-2 text-[10px] leading-6 text-[#5D718C]">تظهر المؤشرات وقوائم المدرسين والطلاب والدروس والتحويلات من ORB API مباشرة.</p><button type="button" onClick={() => void loadDashboardData()} className="mt-4 inline-flex items-center gap-2 text-[10px] font-bold text-[#1769D5]">تحديث البيانات <ChevronLeft size={14} /></button></div>
                 </article>
               </section>
-              <p className="text-center text-[10px] leading-6 text-[#93A0B0]">هذه معاينة لواجهة React مبنية على صلاحيات ORB الحالية. الأرقام والأسماء مؤقتة لعرض الهيكل فقط، ولم تُربط بقاعدة البيانات بعد.</p>
+              <p className="text-center text-[10px] leading-6 text-[#93A0B0]">تعتمد هذه الشاشة على البيانات المتاحة من ORB API عبر Railway. تظهر البيانات وفق صلاحية حساب الأدمن المسجل.</p>
             </section>
           ) : activeView === "teachers" ? (
-            <section className="space-y-6"><SectionTitle eyebrow="إدارة المدرسين" title="طلبات تحقق المدرسين" description="هذه الشاشة تمثل المسارات: عرض المدرسين، عرض الطلبات المعلّقة، اعتماد أو رفض التحقق." action={<Button onClick={() => toast.info("إضافة مدرس تتطلب مسار API مخصصاً في المرحلة التالية.")} className="bg-[#1769D5] text-xs text-white hover:bg-[#0F56B4]">إضافة مدرس</Button>} /><div className="rounded-3xl border border-[#E5EBF2] bg-white p-4 soft-shadow"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{teachers.map((teacher) => <div key={teacher.id} className="rounded-2xl border border-[#E8EEF5] p-4"><MiniAvatar teacher={teacher} /><p className="mt-3 text-xs font-bold text-[#263E5C]">{teacher.name}</p><p className="mt-1 text-[10px] text-[#748397]">{teacher.subject}</p><div className="mt-4">{teacher.status === "pending" ? <div className="flex gap-2"><button type="button" onClick={() => reviewTeacher(teacher.id, "approved")} className="rounded-lg bg-[#E3F6EE] px-2.5 py-2 text-[10px] font-bold text-[#147255]">اعتماد</button><button type="button" onClick={() => reviewTeacher(teacher.id, "rejected")} className="rounded-lg bg-[#FBEDEF] px-2.5 py-2 text-[10px] font-bold text-[#AF3240]">رفض</button></div> : <StatusPill tone={teacher.status === "approved" ? "teal" : "red"}>{teacher.status === "approved" ? "معتمد" : "مرفوض"}</StatusPill>}</div></div>)}</div></div></section>
-          ) : (
-            <EmptySection section={activeTitle} />
-          )}
+            <section className="space-y-6"><SectionTitle eyebrow="إدارة المدرسين" title="المدرسون" description="قائمة حية من المدرسين في ORB. لا يظهر قرار الاعتماد أو الرفض قبل فتح الشهادة ومراجعة بيانات المدرس." /><div className="rounded-3xl border border-[#E5EBF2] bg-white p-4 soft-shadow"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{allTeachers.map((teacher) => <div key={teacher.id} className="rounded-2xl border border-[#E8EEF5] p-4"><MiniAvatar teacher={teacher} /><p className="mt-3 text-xs font-bold text-[#263E5C]">{teacher.name}</p><p className="mt-1 text-[10px] text-[#748397]">{teacher.subject}</p><div className="mt-4">{teacher.status === "pending" ? <button type="button" onClick={() => setSelectedTeacher(teacher)} className="rounded-lg border border-[#CFE0F5] bg-[#F7FAFE] px-2.5 py-2 text-[10px] font-bold text-[#1769D5]">مراجعة الشهادة</button> : <StatusPill tone={teacher.status === "approved" ? "teal" : "red"}>{teacher.status === "approved" ? "معتمد" : "مرفوض"}</StatusPill>}</div></div>)}</div>{!dataLoading && allTeachers.length === 0 && <p className="p-8 text-center text-xs text-[#718195]">لا توجد بيانات مدرسين متاحة.</p>}</div></section>
+          ) : activeView === "students" ? (
+            <section className="space-y-6"><SectionTitle eyebrow="إدارة الطلاب" title="الطلاب" description="راجعي حالة الحساب قبل تفعيله أو تعطيله أو حظره من خلال نافذة تأكيد واضحة." /><div className="overflow-hidden rounded-3xl border border-[#E5EBF2] bg-white soft-shadow"><Table><TableHeader><TableRow className="border-[#EAF0F5]"><TableHead className="text-right">الطالب</TableHead><TableHead className="text-right">البريد الإلكتروني</TableHead><TableHead className="text-right">الحالة</TableHead><TableHead className="text-center">الإدارة</TableHead></TableRow></TableHeader><TableBody>{students.map((student) => <TableRow key={student._id}><TableCell className="font-bold text-[#263E5C]">{fullName(student)}</TableCell><TableCell dir="ltr" className="text-right text-xs text-[#647386]">{student.email || "—"}</TableCell><TableCell><StatusPill tone={student.status === "banned" ? "red" : student.status === "inactive" ? "gold" : "teal"}>{student.status || "active"}</StatusPill></TableCell><TableCell className="text-center"><button type="button" onClick={() => { setSelectedStudent(student); setNextStudentStatus((student.status === "inactive" || student.status === "banned") ? student.status : "active"); }} className="rounded-lg border border-[#CFE0F5] bg-[#F7FAFE] px-3 py-2 text-[10px] font-bold text-[#1769D5]">مراجعة الحالة</button></TableCell></TableRow>)}</TableBody></Table>{!dataLoading && students.length === 0 && <p className="p-8 text-center text-xs text-[#718195]">لا توجد بيانات طلاب متاحة.</p>}</div></section>
+          ) : activeView === "issues" ? (
+            <section className="space-y-6"><SectionTitle eyebrow="مراجعة الدروس" title="الدروس محل المراجعة" description="الدروس التي أعاد ORB API تصنيفها كمشكلة أو غير مكتملة أو محل نزاع." /><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{issues.map((issue) => <article key={issue._id} className="rounded-2xl border border-[#E5EBF2] bg-white p-5 soft-shadow"><StatusPill tone={issue.disputeFlag || issue.reviewStatus === "disputed" ? "red" : "gold"}>{issue.disputeFlag ? "نزاع" : issue.reviewStatus || issue.status || "مراجعة"}</StatusPill><h3 className="mt-4 text-sm font-bold text-[#263E5C]">{issue.title || "درس بلا عنوان"}</h3><p className="mt-2 text-xs text-[#718195]">{issue.subject || "المادة غير محددة"}</p><p className="mt-3 text-[10px] text-[#8A97A5]">{issue.finalCompletionStatus || issue.status || "قيد المراجعة"}</p></article>)}</div>{!dataLoading && issues.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد دروس متاحة للمراجعة حالياً.</div>}</section>
+          ) : activeView === "disputes" ? (
+            <section className="space-y-6"><SectionTitle eyebrow="العدالة المالية" title="حل النزاعات" description="راجعي سبب النزاع والأدلة أولاً، ثم اختاري تحويل المبلغ للمدرس أو الاسترداد للطالب أو الاسترداد الجزئي." /><div className="grid gap-4 lg:grid-cols-2">{disputes.map((dispute) => { const lesson = typeof dispute.lessonId === "string" ? undefined : dispute.lessonId; const lessonTitle = lesson?.title || "درس مرتبط بالنزاع"; return <article key={dispute._id} className="rounded-3xl border border-[#E5EBF2] bg-white p-5 soft-shadow"><div className="flex items-start justify-between gap-3"><div><StatusPill tone={dispute.status === "resolved" ? "teal" : dispute.status === "under_review" ? "gold" : "red"}>{dispute.status === "resolved" ? "تم الحل" : dispute.status === "under_review" ? "قيد المراجعة" : "مفتوح"}</StatusPill><h3 className="mt-3 text-sm font-bold text-[#263E5C]">{lessonTitle}</h3></div><span className="text-[10px] text-[#8A97A5]">{dispute.createdAt ? new Date(dispute.createdAt).toLocaleDateString("ar-EG") : "—"}</span></div><div className="mt-4 rounded-xl bg-[#F8FAFD] p-3"><p className="text-[10px] font-bold text-[#53677F]">سبب النزاع: {dispute.reason || "other"}</p><p className="mt-2 text-[11px] leading-6 text-[#68788D]">{dispute.description || "لا يوجد وصف إضافي من مقدم النزاع."}</p></div>{dispute.evidence?.length ? <p className="mt-3 text-[10px] text-[#61758E]">{dispute.evidence.length} دليل مرفوع للمراجعة داخل نافذة الحل.</p> : null}<div className="mt-4 flex items-center justify-between gap-3">{dispute.resolution?.decision ? <p className="text-[10px] text-[#127054]">القرار: {dispute.resolution.decision}</p> : <p className="text-[10px] text-[#8A97A5]">بانتظار قرار الأدمن</p>}{dispute.status !== "resolved" && <button type="button" onClick={() => { setSelectedDispute(dispute); setDisputeDecision("refund"); setRefundAmount(""); }} className="rounded-lg bg-[#102A4B] px-3 py-2 text-[10px] font-bold text-white transition hover:bg-[#1769D5]">مراجعة وحل النزاع</button>}</div></article>; })}</div>{!dataLoading && disputes.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد نزاعات مسجلة حالياً.</div>}</section>
+          ) : activeView === "payouts" ? (
+            <section className="space-y-6"><SectionTitle eyebrow="الإدارة المالية" title="التحويلات المالية" description="سجل التحويلات المتاح في ORB API. إتمام التحويل يفتح تأكيداً منفصلاً لأنه إجراء مالي مؤثر." /><div className="overflow-hidden rounded-3xl border border-[#E5EBF2] bg-white soft-shadow"><Table><TableHeader><TableRow className="border-[#EAF0F5]"><TableHead className="text-right">المعرّف</TableHead><TableHead className="text-right">المبلغ</TableHead><TableHead className="text-right">الطريقة</TableHead><TableHead className="text-right">الحالة</TableHead><TableHead className="text-center">الإجراء</TableHead></TableRow></TableHeader><TableBody>{payouts.map((payout) => <TableRow key={payout._id}><TableCell className="text-xs text-[#7D8B9C]">{payout._id}</TableCell><TableCell className="font-bold text-[#263E5C]">{payout.amount ?? 0}</TableCell><TableCell className="text-xs text-[#647386]">{payout.method || "—"}</TableCell><TableCell><StatusPill tone={payout.status === "completed" ? "teal" : "gold"}>{payout.status || "pending"}</StatusPill></TableCell><TableCell className="text-center">{payout.status !== "completed" && <button type="button" onClick={() => setSelectedPayout(payout)} className="rounded-lg bg-[#102A4B] px-3 py-2 text-[10px] font-bold text-white">تأكيد الإتمام</button>}</TableCell></TableRow>)}</TableBody></Table>{!dataLoading && payouts.length === 0 && <p className="p-8 text-center text-xs text-[#718195]">لا توجد تحويلات متاحة.</p>}</div></section>
+          ) : activeView === "support" ? (
+            <section className="space-y-6"><SectionTitle eyebrow="مساندة المستخدمين" title="طلبات الدعم" description="تتبّع مشكلات الطلاب والمدرسين ثم أغلقي التذكرة أو أعيدي فتحها وفق الحالة الفعلية." /><div className="grid gap-4 lg:grid-cols-2">{supportTickets.map((ticket) => { const requester = typeof ticket.user === "string" ? "مستخدم ORB" : fullName(ticket.user); return <article key={ticket._id} className="rounded-3xl border border-[#E5EBF2] bg-white p-5 soft-shadow"><div className="flex items-start justify-between gap-3"><div><StatusPill tone={ticket.status === "closed" ? "teal" : ticket.status === "in progress" ? "gold" : "blue"}>{ticket.status || "open"}</StatusPill><h3 className="mt-3 text-sm font-bold text-[#263E5C]">{ticket.problemType || "طلب دعم"}</h3></div><span className="text-[10px] text-[#8A97A5]">{ticket.createdAt ? new Date(ticket.createdAt).toLocaleDateString("ar-EG") : "—"}</span></div><p className="mt-3 text-[11px] font-bold text-[#53677F]">{requester}</p><p className="mt-2 text-[11px] leading-6 text-[#68788D]">{ticket.message || "لا توجد تفاصيل إضافية."}</p><div className="mt-4 flex justify-end">{ticket.status === "closed" ? <button type="button" disabled={updatingTicket === ticket._id} onClick={() => void updateSupportTicket(ticket, "open")} className="rounded-lg border border-[#CFE0F5] bg-[#F7FAFE] px-3 py-2 text-[10px] font-bold text-[#1769D5] disabled:opacity-60">إعادة فتح</button> : <button type="button" disabled={updatingTicket === ticket._id} onClick={() => void updateSupportTicket(ticket, "closed")} className="rounded-lg bg-[#102A4B] px-3 py-2 text-[10px] font-bold text-white disabled:opacity-60">إغلاق التذكرة</button>}</div></article>; })}</div>{!dataLoading && supportTickets.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد تذاكر دعم متاحة.</div>}</section>
+          ) : activeView === "notifications" ? (
+            <section className="space-y-6"><SectionTitle eyebrow="اتصالات المنصة" title="الإشعارات" description="قائمة الإشعارات التي وصلت إلى حساب الأدمن. يمكن تعليم الإشعار كمقروء بعد مراجعته." /><div className="space-y-3">{notifications.map((notification) => <article key={notification._id} className={`rounded-2xl border p-5 soft-shadow ${notification.read ? "border-[#E5EBF2] bg-white" : "border-[#BFD6F5] bg-[#F7FBFF]"}`}><div className="flex items-start justify-between gap-3"><div><StatusPill tone={notification.read ? "teal" : "blue"}>{notification.read ? "مقروء" : "جديد"}</StatusPill><h3 className="mt-3 text-sm font-bold text-[#263E5C]">{notification.title || "إشعار ORB"}</h3></div><span className="text-[10px] text-[#8A97A5]">{notification.createdAt ? new Date(notification.createdAt).toLocaleDateString("ar-EG") : "—"}</span></div><p className="mt-3 text-xs leading-6 text-[#68788D]">{notification.message || "لا توجد رسالة إضافية."}</p>{!notification.read && <button type="button" disabled={markingNotification === notification._id} onClick={() => void markNotificationRead(notification)} className="mt-4 text-[10px] font-bold text-[#1769D5] disabled:opacity-60">تعليم كمقروء</button>}</article>)}</div>{!dataLoading && notifications.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد إشعارات متاحة.</div>}</section>
+          ) : activeView === "admins" ? (
+            <section className="space-y-6"><SectionTitle eyebrow="فريق الإدارة" title="حسابات الأدمن" description="الحسابات ذات صلاحية الإدارة في ORB." /><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{admins.map((admin) => <article key={admin._id} className="rounded-2xl border border-[#E5EBF2] bg-white p-5 soft-shadow"><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#FFF4D7] font-bold text-[#8F5C00]">{initials(fullName(admin))}</div><h3 className="mt-4 text-sm font-bold text-[#263E5C]">{fullName(admin)}</h3><p dir="ltr" className="mt-2 text-right text-xs text-[#718195]">{admin.email || "—"}</p><StatusPill tone="blue">admin</StatusPill></article>)}</div>{!dataLoading && admins.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد بيانات فريق إدارة متاحة.</div>}</section>
+          ) : <EmptySection section={activeTitle} />}
         </div>
       </main>
 
@@ -533,6 +661,30 @@ export default function Home() {
           return <button key={item.id} type="button" onClick={() => changeView(item.id)} className={`relative grid place-items-center gap-1 rounded-xl py-1.5 text-[9px] font-bold ${isActive ? "text-[#1769D5]" : "text-[#7B899A]"}`}><Icon size={19} strokeWidth={isActive ? 2.3 : 1.8} />{item.label === "الدروس محل المراجعة" ? "المراجعة" : item.label}</button>;
         })}
       </nav>
+
+      <Dialog open={Boolean(selectedTeacher)} onOpenChange={(open) => { if (!open) { setSelectedTeacher(null); setTeacherReviewNote(""); } }}>
+        <DialogContent dir="rtl" className="max-h-[90vh] max-w-2xl overflow-y-auto border-[#D9E5F2] bg-white p-0 text-right">
+          <DialogHeader className="border-b border-[#E7EDF4] p-6 text-right"><DialogTitle className="font-display text-xl text-[#102A4B]">مراجعة شهادة المدرس</DialogTitle><DialogDescription className="text-right text-xs leading-6 text-[#6C7D91]">راجعي المستند المرفوع وبيانات الطلب قبل اتخاذ أي قرار نهائي.</DialogDescription></DialogHeader>
+          {selectedTeacher && <div className="space-y-5 p-6"><div className="flex items-center gap-3"><MiniAvatar teacher={selectedTeacher} /><div><p className="text-sm font-bold text-[#263E5C]">{selectedTeacher.name}</p><p className="mt-1 text-[11px] text-[#6C7D91]">{selectedTeacher.subject}</p><p dir="ltr" className="mt-1 text-right text-[10px] text-[#8391A1]">{selectedTeacher.email || "—"}</p></div></div>{selectedTeacher.certificate ? <section className="overflow-hidden rounded-2xl border border-[#D8E4F1]"><div className="flex items-center justify-between border-b border-[#E5EDF5] bg-[#F7FAFE] px-4 py-3"><span className="text-[11px] font-bold text-[#3B5470]">الشهادة المرفوعة</span><a href={selectedTeacher.certificate} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-[10px] font-bold text-[#1769D5]"><ExternalLink size={13} />فتح في تبويب جديد</a></div><iframe title={`شهادة ${selectedTeacher.name}`} src={selectedTeacher.certificate} sandbox="" className="h-[340px] w-full bg-[#F5F8FC]" /></section> : <section className="rounded-2xl border border-dashed border-[#E6B5BB] bg-[#FFF7F8] p-4 text-[11px] leading-6 text-[#A13441]">لا يوجد رابط شهادة مرفوع لهذا الطلب؛ لا يمكن اعتماد المدرس قبل إرفاق المستند.</section>}<label className="block"><span className="mb-2 block text-[11px] font-bold text-[#435873]">سبب الرفض — مطلوب فقط عند الرفض</span><textarea value={teacherReviewNote} onChange={(event) => setTeacherReviewNote(event.target.value)} rows={3} placeholder="اكتبي ملاحظة واضحة للمدرس إن تم الرفض" className="w-full resize-none rounded-xl border border-[#DCE6F0] bg-[#FBFDFF] p-3 text-xs outline-none transition focus:border-[#1769D5]" /></label></div>}
+          <DialogFooter className="border-t border-[#E7EDF4] p-5 sm:justify-start"><Button type="button" variant="outline" onClick={() => { setSelectedTeacher(null); setTeacherReviewNote(""); }} className="border-[#D9E5F2] text-[#58708B]">إلغاء</Button><Button type="button" disabled={!selectedTeacher || reviewingTeacher === selectedTeacher.id || !canFinalizeTeacherReview(selectedTeacher.certificate, "rejected", teacherReviewNote)} onClick={() => selectedTeacher && void reviewTeacher(selectedTeacher.id, "rejected")} className="bg-[#B12D3B] text-white hover:bg-[#94212D]">رفض الطلب</Button><Button type="button" disabled={!selectedTeacher || reviewingTeacher === selectedTeacher.id || !canFinalizeTeacherReview(selectedTeacher.certificate, "approved", teacherReviewNote)} onClick={() => selectedTeacher && void reviewTeacher(selectedTeacher.id, "approved")} className="bg-[#147255] text-white hover:bg-[#0F5D44]"><Check size={16} />اعتماد المدرس</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(selectedDispute)} onOpenChange={(open) => { if (!open) { setSelectedDispute(null); setRefundAmount(""); } }}>
+        <DialogContent dir="rtl" className="max-h-[90vh] max-w-2xl overflow-y-auto border-[#D9E5F2] bg-white p-0 text-right">
+          <DialogHeader className="border-b border-[#E7EDF4] p-6 text-right"><DialogTitle className="font-display text-xl text-[#102A4B]">مراجعة وحل النزاع</DialogTitle><DialogDescription className="text-right text-xs leading-6 text-[#6C7D91]">القرار النهائي يغيّر حالة السجلات المالية ويرسل إشعاراً للطرفين؛ راجعي الأدلة قبل التأكيد.</DialogDescription></DialogHeader>
+          {selectedDispute && <div className="space-y-5 p-6"><div className="rounded-2xl bg-[#F7FAFE] p-4"><p className="text-[11px] font-bold text-[#3B5470]">{typeof selectedDispute.lessonId === "string" ? "درس مرتبط بالنزاع" : selectedDispute.lessonId?.title || "درس مرتبط بالنزاع"}</p><p className="mt-2 text-[11px] leading-6 text-[#66798F]">السبب: {selectedDispute.reason || "other"} · {selectedDispute.description || "لا يوجد وصف إضافي"}</p></div>{selectedDispute.evidence?.length ? <section><p className="mb-2 text-[11px] font-bold text-[#435873]">الأدلة المرفوعة</p><div className="flex flex-wrap gap-2">{selectedDispute.evidence.map((evidence, index) => evidence.url ? <a key={`${evidence.url}-${index}`} href={evidence.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-[#CFE0F5] bg-[#F7FAFE] px-3 py-2 text-[10px] font-bold text-[#1769D5]"><ExternalLink size={13} />دليل {index + 1}</a> : null)}</div></section> : <p className="text-[11px] text-[#8A97A5]">لا توجد أدلة مرفوعة مع هذا النزاع.</p>}<fieldset><legend className="mb-3 text-[11px] font-bold text-[#435873]">قرار الإدمن</legend><div className="grid gap-2 sm:grid-cols-3">{[{ value: "refund", label: "استرداد للطالب" }, { value: "release", label: "تحويل للمدرس" }, { value: "partial", label: "استرداد جزئي" }].map((choice) => <label key={choice.value} className={`cursor-pointer rounded-xl border p-3 text-center text-[10px] font-bold ${disputeDecision === choice.value ? "border-[#1769D5] bg-[#EAF2FF] text-[#1769D5]" : "border-[#E1E8F1] text-[#647386]"}`}><input className="sr-only" type="radio" name="dispute-decision" value={choice.value} checked={disputeDecision === choice.value} onChange={() => setDisputeDecision(choice.value as "refund" | "release" | "partial")} />{choice.label}</label>)}</div></fieldset>{disputeDecision === "partial" && <label className="block"><span className="mb-2 block text-[11px] font-bold text-[#435873]">قيمة الاسترداد الجزئي</span><input dir="ltr" value={refundAmount} onChange={(event) => setRefundAmount(event.target.value)} inputMode="decimal" placeholder="0.00" className="h-11 w-full rounded-xl border border-[#DCE6F0] bg-[#FBFDFF] px-3 text-left text-xs outline-none focus:border-[#1769D5]" /></label>}</div>}
+          <DialogFooter className="border-t border-[#E7EDF4] p-5 sm:justify-start"><Button type="button" variant="outline" onClick={() => { setSelectedDispute(null); setRefundAmount(""); }} className="border-[#D9E5F2] text-[#58708B]">إلغاء</Button><Button type="button" disabled={resolvingDispute} onClick={() => void resolveDispute()} className="bg-[#102A4B] text-white hover:bg-[#1769D5]">{resolvingDispute ? "جارٍ تسجيل القرار…" : "تأكيد حل النزاع"}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(selectedStudent)} onOpenChange={(open) => { if (!open) setSelectedStudent(null); }}>
+        <DialogContent dir="rtl" className="max-w-lg border-[#D9E5F2] bg-white text-right"><DialogHeader className="text-right"><DialogTitle className="font-display text-xl text-[#102A4B]">مراجعة حالة الطالب</DialogTitle><DialogDescription className="text-right text-xs leading-6 text-[#6C7D91]">اختاري الحالة المناسبة للحساب. الحظر أو التعطيل يمنع الوصول إلى المنصة حتى تغيّر الحالة مرة أخرى.</DialogDescription></DialogHeader>{selectedStudent && <div className="space-y-4"><div className="rounded-xl bg-[#F7FAFE] p-4"><p className="text-sm font-bold text-[#263E5C]">{fullName(selectedStudent)}</p><p dir="ltr" className="mt-1 text-right text-[11px] text-[#718195]">{selectedStudent.email || "—"}</p></div><label className="block"><span className="mb-2 block text-[11px] font-bold text-[#435873]">الحالة الجديدة</span><select value={nextStudentStatus} onChange={(event) => setNextStudentStatus(event.target.value as "active" | "inactive" | "banned")} className="h-11 w-full rounded-xl border border-[#DCE6F0] bg-white px-3 text-xs outline-none focus:border-[#1769D5]"><option value="active">نشط</option><option value="inactive">غير نشط</option><option value="banned">محظور</option></select></label></div>}<DialogFooter className="sm:justify-start"><Button type="button" variant="outline" onClick={() => setSelectedStudent(null)} className="border-[#D9E5F2] text-[#58708B]">إلغاء</Button><Button type="button" disabled={updatingStudent} onClick={() => void updateStudentStatus()} className={nextStudentStatus === "banned" ? "bg-[#B12D3B] text-white hover:bg-[#94212D]" : "bg-[#1769D5] text-white hover:bg-[#0F56B4]"}>{updatingStudent ? "جارٍ التحديث…" : "تأكيد تحديث الحالة"}</Button></DialogFooter></DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(selectedPayout)} onOpenChange={(open) => { if (!open) setSelectedPayout(null); }}>
+        <DialogContent dir="rtl" className="max-w-lg border-[#D9E5F2] bg-white text-right"><DialogHeader className="text-right"><DialogTitle className="font-display text-xl text-[#102A4B]">تأكيد إتمام التحويل</DialogTitle><DialogDescription className="text-right text-xs leading-6 text-[#6C7D91]">سيتم تحويل حالة السجل إلى مكتمل وتأكيد قيود المحاسبة المرتبطة به. راجعي بيانات التحويل قبل التأكيد.</DialogDescription></DialogHeader>{selectedPayout && <div className="rounded-2xl border border-[#E1EAF3] bg-[#F7FAFE] p-4"><p className="text-[11px] text-[#708095]">معرّف التحويل</p><p dir="ltr" className="mt-1 break-all text-right text-xs font-bold text-[#263E5C]">{selectedPayout._id}</p><p className="mt-4 text-[11px] text-[#708095]">المبلغ والطريقة</p><p className="mt-1 text-sm font-bold text-[#263E5C]">{selectedPayout.amount ?? 0} · {selectedPayout.method || "—"}</p></div>}<DialogFooter className="sm:justify-start"><Button type="button" variant="outline" onClick={() => setSelectedPayout(null)} className="border-[#D9E5F2] text-[#58708B]">إلغاء</Button><Button type="button" disabled={completingPayout} onClick={() => void completePayout()} className="bg-[#147255] text-white hover:bg-[#0F5D44]">{completingPayout ? "جارٍ التأكيد…" : "تأكيد إتمام التحويل"}</Button></DialogFooter></DialogContent>
+      </Dialog>
     </div>
   );
 }

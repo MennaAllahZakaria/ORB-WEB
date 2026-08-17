@@ -4,21 +4,25 @@ import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
-import DashboardLayout from "./components/DashboardLayout";
+import { OrbAuthProvider, useOrbAuth } from "./contexts/OrbAuthContext";
+import AccessDenied from "./pages/AccessDenied";
 import LoginPage from "./pages/LoginPage";
 import Home from "./pages/Home";
 
 /** Style reminder — ORB «دفتر المنارة»: the application frame is a clear RTL education operations workspace. */
+function AdminGate() {
+  const { ready, user, logout } = useOrbAuth();
+  if (!ready) return <div className="min-h-screen bg-[#F6F9FC]" />;
+  if (!user) return <LoginPage />;
+  if (user.role !== "admin") return <AccessDenied onLogout={logout} />;
+  return <Home />;
+}
+
 function Router() {
-  // make sure to consider if you need authentication for certain routes
   return (
     <Switch>
       <Route path={"/login"} component={LoginPage} />
-      <Route path={"/"}>
-        <DashboardLayout hideChrome requireAdmin>
-          <Home />
-        </DashboardLayout>
-      </Route>
+      <Route path={"/"} component={AdminGate} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />
@@ -40,7 +44,7 @@ function App() {
       >
         <TooltipProvider>
           <Toaster />
-          <Router />
+          <OrbAuthProvider><Router /></OrbAuthProvider>
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>
