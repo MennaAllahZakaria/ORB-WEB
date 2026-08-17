@@ -227,6 +227,19 @@ export default function Home() {
   const [updatingStudent, setUpdatingStudent] = useState(false);
   const [selectedPayout, setSelectedPayout] = useState<ApiPayout | null>(null);
   const [completingPayout, setCompletingPayout] = useState(false);
+  const [adminDialogOpen, setAdminDialogOpen] = useState(false);
+  const [newAdmin, setNewAdmin] = useState({ firstName: "", lastName: "", email: "", phone: "" });
+  const [creatingAdmin, setCreatingAdmin] = useState(false);
+  const [adminPendingRemoval, setAdminPendingRemoval] = useState<ApiUser | null>(null);
+  const [removingAdmin, setRemovingAdmin] = useState(false);
+  const [editingAdmin, setEditingAdmin] = useState<ApiUser | null>(null);
+  const [adminEdit, setAdminEdit] = useState({ firstName: "", lastName: "", email: "", phone: "" });
+  const [savingAdmin, setSavingAdmin] = useState(false);
+  const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
+  const [notificationDraft, setNotificationDraft] = useState({ title: "", message: "", userEmail: "" });
+  const [sendingNotification, setSendingNotification] = useState(false);
+  const [notificationPendingDeletion, setNotificationPendingDeletion] = useState<ApiNotification | null>(null);
+  const [deletingNotification, setDeletingNotification] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
 
@@ -373,6 +386,80 @@ export default function Home() {
       await loadDashboardData();
     } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر إتمام التحويل."); }
     finally { setCompletingPayout(false); }
+  };
+
+  const createAdmin = async () => {
+    if (!token) return;
+    if (!newAdmin.firstName.trim() || !newAdmin.lastName.trim() || !newAdmin.email.trim()) {
+      toast.error("أدخلي الاسم الأول واسم العائلة والبريد الإلكتروني.");
+      return;
+    }
+    setCreatingAdmin(true);
+    try {
+      await orbApi<ApiUser>("/admin", { token, method: "POST", body: { ...newAdmin, firstName: newAdmin.firstName.trim(), lastName: newAdmin.lastName.trim(), email: newAdmin.email.trim() } });
+      toast.success("تم إنشاء حساب الأدمن وإرسال بياناته بالبريد إن كانت خدمة البريد مهيأة.");
+      setNewAdmin({ firstName: "", lastName: "", email: "", phone: "" });
+      setAdminDialogOpen(false);
+      await loadDashboardData();
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر إنشاء حساب الأدمن."); }
+    finally { setCreatingAdmin(false); }
+  };
+
+  const removeAdmin = async () => {
+    if (!token || !adminPendingRemoval) return;
+    setRemovingAdmin(true);
+    try {
+      await orbApi<{ message: string }>(`/admin/${adminPendingRemoval._id}`, { token, method: "DELETE" });
+      toast.success("تم حذف حساب الأدمن.");
+      setAdminPendingRemoval(null);
+      await loadDashboardData();
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حذف حساب الأدمن."); }
+    finally { setRemovingAdmin(false); }
+  };
+
+  const saveAdminEdit = async () => {
+    if (!token || !editingAdmin) return;
+    if (!adminEdit.firstName.trim() || !adminEdit.lastName.trim() || !adminEdit.email.trim()) {
+      toast.error("أدخلي الاسم الأول واسم العائلة والبريد الإلكتروني.");
+      return;
+    }
+    setSavingAdmin(true);
+    try {
+      await orbApi<ApiUser>(`/admin/${editingAdmin._id}`, { token, method: "PUT", body: { ...adminEdit, firstName: adminEdit.firstName.trim(), lastName: adminEdit.lastName.trim(), email: adminEdit.email.trim() } });
+      toast.success("تم تحديث بيانات حساب الأدمن.");
+      setEditingAdmin(null);
+      await loadDashboardData();
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر تحديث حساب الأدمن."); }
+    finally { setSavingAdmin(false); }
+  };
+
+  const sendNotification = async () => {
+    if (!token) return;
+    if (!notificationDraft.title.trim() || !notificationDraft.message.trim() || !notificationDraft.userEmail.trim()) {
+      toast.error("أدخلي العنوان والرسالة وبريد المستلم.");
+      return;
+    }
+    setSendingNotification(true);
+    try {
+      await orbApi<ApiNotification>("/notifications", { token, method: "POST", body: { title: notificationDraft.title.trim(), message: notificationDraft.message.trim(), userEmail: notificationDraft.userEmail.trim() } });
+      toast.success("تم إرسال الإشعار إلى المستخدم.");
+      setNotificationDraft({ title: "", message: "", userEmail: "" });
+      setNotificationDialogOpen(false);
+      await loadDashboardData();
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر إرسال الإشعار."); }
+    finally { setSendingNotification(false); }
+  };
+
+  const deleteNotification = async () => {
+    if (!token || !notificationPendingDeletion) return;
+    setDeletingNotification(true);
+    try {
+      await orbApi<{ message: string }>(`/notifications/${notificationPendingDeletion._id}`, { token, method: "DELETE" });
+      toast.success("تم حذف الإشعار.");
+      setNotificationPendingDeletion(null);
+      await loadDashboardData();
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حذف الإشعار."); }
+    finally { setDeletingNotification(false); }
   };
 
   const changeView = (view: NavigationKey) => {
@@ -647,9 +734,9 @@ export default function Home() {
           ) : activeView === "support" ? (
             <section className="space-y-6"><SectionTitle eyebrow="مساندة المستخدمين" title="طلبات الدعم" description="تتبّع مشكلات الطلاب والمدرسين ثم أغلقي التذكرة أو أعيدي فتحها وفق الحالة الفعلية." /><div className="grid gap-4 lg:grid-cols-2">{supportTickets.map((ticket) => { const requester = typeof ticket.user === "string" ? "مستخدم ORB" : fullName(ticket.user); return <article key={ticket._id} className="rounded-3xl border border-[#E5EBF2] bg-white p-5 soft-shadow"><div className="flex items-start justify-between gap-3"><div><StatusPill tone={ticket.status === "closed" ? "teal" : ticket.status === "in progress" ? "gold" : "blue"}>{ticket.status || "open"}</StatusPill><h3 className="mt-3 text-sm font-bold text-[#263E5C]">{ticket.problemType || "طلب دعم"}</h3></div><span className="text-[10px] text-[#8A97A5]">{ticket.createdAt ? new Date(ticket.createdAt).toLocaleDateString("ar-EG") : "—"}</span></div><p className="mt-3 text-[11px] font-bold text-[#53677F]">{requester}</p><p className="mt-2 text-[11px] leading-6 text-[#68788D]">{ticket.message || "لا توجد تفاصيل إضافية."}</p><div className="mt-4 flex justify-end">{ticket.status === "closed" ? <button type="button" disabled={updatingTicket === ticket._id} onClick={() => void updateSupportTicket(ticket, "open")} className="rounded-lg border border-[#CFE0F5] bg-[#F7FAFE] px-3 py-2 text-[10px] font-bold text-[#1769D5] disabled:opacity-60">إعادة فتح</button> : <button type="button" disabled={updatingTicket === ticket._id} onClick={() => void updateSupportTicket(ticket, "closed")} className="rounded-lg bg-[#102A4B] px-3 py-2 text-[10px] font-bold text-white disabled:opacity-60">إغلاق التذكرة</button>}</div></article>; })}</div>{!dataLoading && supportTickets.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد تذاكر دعم متاحة.</div>}</section>
           ) : activeView === "notifications" ? (
-            <section className="space-y-6"><SectionTitle eyebrow="اتصالات المنصة" title="الإشعارات" description="قائمة الإشعارات التي وصلت إلى حساب الأدمن. يمكن تعليم الإشعار كمقروء بعد مراجعته." /><div className="space-y-3">{notifications.map((notification) => <article key={notification._id} className={`rounded-2xl border p-5 soft-shadow ${notification.read ? "border-[#E5EBF2] bg-white" : "border-[#BFD6F5] bg-[#F7FBFF]"}`}><div className="flex items-start justify-between gap-3"><div><StatusPill tone={notification.read ? "teal" : "blue"}>{notification.read ? "مقروء" : "جديد"}</StatusPill><h3 className="mt-3 text-sm font-bold text-[#263E5C]">{notification.title || "إشعار ORB"}</h3></div><span className="text-[10px] text-[#8A97A5]">{notification.createdAt ? new Date(notification.createdAt).toLocaleDateString("ar-EG") : "—"}</span></div><p className="mt-3 text-xs leading-6 text-[#68788D]">{notification.message || "لا توجد رسالة إضافية."}</p>{!notification.read && <button type="button" disabled={markingNotification === notification._id} onClick={() => void markNotificationRead(notification)} className="mt-4 text-[10px] font-bold text-[#1769D5] disabled:opacity-60">تعليم كمقروء</button>}</article>)}</div>{!dataLoading && notifications.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد إشعارات متاحة.</div>}</section>
+            <section className="space-y-6"><SectionTitle eyebrow="اتصالات المنصة" title="الإشعارات" description="إرسال رسائل للمستخدمين ومراجعة الرسائل الحالية، مع تعليمها كمقروء أو حذفها بعد التحقق." action={<Button type="button" onClick={() => setNotificationDialogOpen(true)} className="bg-[#1769D5] text-xs text-white hover:bg-[#0F56B4]"><Bell size={16} />إرسال إشعار</Button>} /><div className="space-y-3">{notifications.map((notification) => <article key={notification._id} className={`rounded-2xl border p-5 soft-shadow ${notification.read ? "border-[#E5EBF2] bg-white" : "border-[#BFD6F5] bg-[#F7FBFF]"}`}><div className="flex items-start justify-between gap-3"><div><StatusPill tone={notification.read ? "teal" : "blue"}>{notification.read ? "مقروء" : "جديد"}</StatusPill><h3 className="mt-3 text-sm font-bold text-[#263E5C]">{notification.title || "إشعار ORB"}</h3></div><span className="text-[10px] text-[#8A97A5]">{notification.createdAt ? new Date(notification.createdAt).toLocaleDateString("ar-EG") : "—"}</span></div><p className="mt-3 text-xs leading-6 text-[#68788D]">{notification.message || "لا توجد رسالة إضافية."}</p><div className="mt-4 flex gap-4">{!notification.read && <button type="button" disabled={markingNotification === notification._id} onClick={() => void markNotificationRead(notification)} className="text-[10px] font-bold text-[#1769D5] disabled:opacity-60">تعليم كمقروء</button>}<button type="button" onClick={() => setNotificationPendingDeletion(notification)} className="text-[10px] font-bold text-[#B12D3B]">حذف</button></div></article>)}</div>{!dataLoading && notifications.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد إشعارات متاحة.</div>}</section>
           ) : activeView === "admins" ? (
-            <section className="space-y-6"><SectionTitle eyebrow="فريق الإدارة" title="حسابات الأدمن" description="الحسابات ذات صلاحية الإدارة في ORB." /><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{admins.map((admin) => <article key={admin._id} className="rounded-2xl border border-[#E5EBF2] bg-white p-5 soft-shadow"><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#FFF4D7] font-bold text-[#8F5C00]">{initials(fullName(admin))}</div><h3 className="mt-4 text-sm font-bold text-[#263E5C]">{fullName(admin)}</h3><p dir="ltr" className="mt-2 text-right text-xs text-[#718195]">{admin.email || "—"}</p><StatusPill tone="blue">admin</StatusPill></article>)}</div>{!dataLoading && admins.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد بيانات فريق إدارة متاحة.</div>}</section>
+            <section className="space-y-6"><SectionTitle eyebrow="فريق الإدارة" title="حسابات الأدمن" description="إنشاء وتعديل وحذف حسابات الإدارة من خلال تأكيدات واضحة ومسارات ORB الفعلية." action={<Button type="button" onClick={() => setAdminDialogOpen(true)} className="bg-[#1769D5] text-xs text-white hover:bg-[#0F56B4]"><ShieldCheck size={16} />إضافة أدمن</Button>} /><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{admins.map((admin) => <article key={admin._id} className="rounded-2xl border border-[#E5EBF2] bg-white p-5 soft-shadow"><div className="flex items-start justify-between gap-3"><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#FFF4D7] font-bold text-[#8F5C00]">{initials(fullName(admin))}</div>{admin._id !== user?._id && <div className="flex gap-2"><button type="button" onClick={() => { setEditingAdmin(admin); setAdminEdit({ firstName: admin.firstName || "", lastName: admin.lastName || "", email: admin.email || "", phone: admin.phone || "" }); }} className="rounded-lg bg-[#EAF2FF] px-2.5 py-2 text-[10px] font-bold text-[#1769D5]">تعديل</button><button type="button" onClick={() => setAdminPendingRemoval(admin)} className="rounded-lg bg-[#FFF1F2] px-2.5 py-2 text-[10px] font-bold text-[#B12D3B]">حذف</button></div>}</div><h3 className="mt-4 text-sm font-bold text-[#263E5C]">{fullName(admin)}</h3><p dir="ltr" className="mt-2 text-right text-xs text-[#718195]">{admin.email || "—"}</p><p dir="ltr" className="mt-1 text-right text-[10px] text-[#8A97A5]">{admin.phone || "—"}</p><div className="mt-3"><StatusPill tone="blue">admin</StatusPill></div></article>)}</div>{!dataLoading && admins.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد بيانات فريق إدارة متاحة.</div>}</section>
           ) : <EmptySection section={activeTitle} />}
         </div>
       </main>
@@ -684,6 +771,26 @@ export default function Home() {
 
       <Dialog open={Boolean(selectedPayout)} onOpenChange={(open) => { if (!open) setSelectedPayout(null); }}>
         <DialogContent dir="rtl" className="max-w-lg border-[#D9E5F2] bg-white text-right"><DialogHeader className="text-right"><DialogTitle className="font-display text-xl text-[#102A4B]">تأكيد إتمام التحويل</DialogTitle><DialogDescription className="text-right text-xs leading-6 text-[#6C7D91]">سيتم تحويل حالة السجل إلى مكتمل وتأكيد قيود المحاسبة المرتبطة به. راجعي بيانات التحويل قبل التأكيد.</DialogDescription></DialogHeader>{selectedPayout && <div className="rounded-2xl border border-[#E1EAF3] bg-[#F7FAFE] p-4"><p className="text-[11px] text-[#708095]">معرّف التحويل</p><p dir="ltr" className="mt-1 break-all text-right text-xs font-bold text-[#263E5C]">{selectedPayout._id}</p><p className="mt-4 text-[11px] text-[#708095]">المبلغ والطريقة</p><p className="mt-1 text-sm font-bold text-[#263E5C]">{selectedPayout.amount ?? 0} · {selectedPayout.method || "—"}</p></div>}<DialogFooter className="sm:justify-start"><Button type="button" variant="outline" onClick={() => setSelectedPayout(null)} className="border-[#D9E5F2] text-[#58708B]">إلغاء</Button><Button type="button" disabled={completingPayout} onClick={() => void completePayout()} className="bg-[#147255] text-white hover:bg-[#0F5D44]">{completingPayout ? "جارٍ التأكيد…" : "تأكيد إتمام التحويل"}</Button></DialogFooter></DialogContent>
+      </Dialog>
+
+      <Dialog open={adminDialogOpen} onOpenChange={setAdminDialogOpen}>
+        <DialogContent dir="rtl" className="max-w-lg border-[#D9E5F2] bg-white text-right"><DialogHeader className="text-right"><DialogTitle className="font-display text-xl text-[#102A4B]">إضافة حساب أدمن</DialogTitle><DialogDescription className="text-right text-xs leading-6 text-[#6C7D91]">ينشئ ORB حساب أدمن جديداً بكلمة مرور مؤقتة، ويرسلها إلى البريد عند تفعيل خدمة الإرسال في الباك إند.</DialogDescription></DialogHeader><div className="grid gap-3 sm:grid-cols-2"><label><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">الاسم الأول</span><input value={newAdmin.firstName} onChange={(event) => setNewAdmin((current) => ({ ...current, firstName: event.target.value }))} className="h-10 w-full rounded-xl border border-[#DCE6F0] px-3 text-xs outline-none focus:border-[#1769D5]" /></label><label><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">اسم العائلة</span><input value={newAdmin.lastName} onChange={(event) => setNewAdmin((current) => ({ ...current, lastName: event.target.value }))} className="h-10 w-full rounded-xl border border-[#DCE6F0] px-3 text-xs outline-none focus:border-[#1769D5]" /></label><label className="sm:col-span-2"><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">البريد الإلكتروني</span><input dir="ltr" type="email" value={newAdmin.email} onChange={(event) => setNewAdmin((current) => ({ ...current, email: event.target.value }))} className="h-10 w-full rounded-xl border border-[#DCE6F0] px-3 text-left text-xs outline-none focus:border-[#1769D5]" /></label><label className="sm:col-span-2"><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">الهاتف — اختياري</span><input dir="ltr" value={newAdmin.phone} onChange={(event) => setNewAdmin((current) => ({ ...current, phone: event.target.value }))} className="h-10 w-full rounded-xl border border-[#DCE6F0] px-3 text-left text-xs outline-none focus:border-[#1769D5]" /></label></div><DialogFooter className="sm:justify-start"><Button type="button" variant="outline" onClick={() => setAdminDialogOpen(false)} className="border-[#D9E5F2] text-[#58708B]">إلغاء</Button><Button type="button" disabled={creatingAdmin} onClick={() => void createAdmin()} className="bg-[#1769D5] text-white hover:bg-[#0F56B4]">{creatingAdmin ? "جارٍ الإنشاء…" : "إنشاء حساب الأدمن"}</Button></DialogFooter></DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(adminPendingRemoval)} onOpenChange={(open) => { if (!open) setAdminPendingRemoval(null); }}>
+        <DialogContent dir="rtl" className="max-w-lg border-[#F2C8CE] bg-white text-right"><DialogHeader className="text-right"><DialogTitle className="font-display text-xl text-[#A22D3A]">حذف حساب أدمن</DialogTitle><DialogDescription className="text-right text-xs leading-6 text-[#6C7D91]">هذا الإجراء يحذف الحساب المستهدف نهائياً ولا يمكن التراجع عنه من لوحة ORB.</DialogDescription></DialogHeader>{adminPendingRemoval && <div className="rounded-xl bg-[#FFF4F5] p-4"><p className="text-sm font-bold text-[#75303A]">{fullName(adminPendingRemoval)}</p><p dir="ltr" className="mt-1 text-right text-[11px] text-[#8A5960]">{adminPendingRemoval.email || "—"}</p></div>}<DialogFooter className="sm:justify-start"><Button type="button" variant="outline" onClick={() => setAdminPendingRemoval(null)} className="border-[#E6C8CD] text-[#87616A]">إلغاء</Button><Button type="button" disabled={removingAdmin} onClick={() => void removeAdmin()} className="bg-[#B12D3B] text-white hover:bg-[#94212D]">{removingAdmin ? "جارٍ الحذف…" : "تأكيد حذف الحساب"}</Button></DialogFooter></DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(editingAdmin)} onOpenChange={(open) => { if (!open) setEditingAdmin(null); }}>
+        <DialogContent dir="rtl" className="max-w-lg border-[#D9E5F2] bg-white text-right"><DialogHeader className="text-right"><DialogTitle className="font-display text-xl text-[#102A4B]">تعديل بيانات الأدمن</DialogTitle><DialogDescription className="text-right text-xs leading-6 text-[#6C7D91]">يقتصر التعديل على البيانات الأساسية للحساب؛ لا يمكن تغيير الدور أو كلمة المرور من هذا المسار.</DialogDescription></DialogHeader><div className="grid gap-3 sm:grid-cols-2"><label><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">الاسم الأول</span><input value={adminEdit.firstName} onChange={(event) => setAdminEdit((current) => ({ ...current, firstName: event.target.value }))} className="h-10 w-full rounded-xl border border-[#DCE6F0] px-3 text-xs outline-none focus:border-[#1769D5]" /></label><label><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">اسم العائلة</span><input value={adminEdit.lastName} onChange={(event) => setAdminEdit((current) => ({ ...current, lastName: event.target.value }))} className="h-10 w-full rounded-xl border border-[#DCE6F0] px-3 text-xs outline-none focus:border-[#1769D5]" /></label><label className="sm:col-span-2"><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">البريد الإلكتروني</span><input dir="ltr" type="email" value={adminEdit.email} onChange={(event) => setAdminEdit((current) => ({ ...current, email: event.target.value }))} className="h-10 w-full rounded-xl border border-[#DCE6F0] px-3 text-left text-xs outline-none focus:border-[#1769D5]" /></label><label className="sm:col-span-2"><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">الهاتف</span><input dir="ltr" value={adminEdit.phone} onChange={(event) => setAdminEdit((current) => ({ ...current, phone: event.target.value }))} className="h-10 w-full rounded-xl border border-[#DCE6F0] px-3 text-left text-xs outline-none focus:border-[#1769D5]" /></label></div><DialogFooter className="sm:justify-start"><Button type="button" variant="outline" onClick={() => setEditingAdmin(null)} className="border-[#D9E5F2] text-[#58708B]">إلغاء</Button><Button type="button" disabled={savingAdmin} onClick={() => void saveAdminEdit()} className="bg-[#1769D5] text-white hover:bg-[#0F56B4]">{savingAdmin ? "جارٍ الحفظ…" : "حفظ التعديلات"}</Button></DialogFooter></DialogContent>
+      </Dialog>
+
+      <Dialog open={notificationDialogOpen} onOpenChange={setNotificationDialogOpen}>
+        <DialogContent dir="rtl" className="max-w-lg border-[#D9E5F2] bg-white text-right"><DialogHeader className="text-right"><DialogTitle className="font-display text-xl text-[#102A4B]">إرسال إشعار</DialogTitle><DialogDescription className="text-right text-xs leading-6 text-[#6C7D91]">يصل الإشعار إلى المستخدم الذي يطابق بريده الإلكتروني في ORB.</DialogDescription></DialogHeader><div className="space-y-3"><label className="block"><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">بريد المستلم</span><input dir="ltr" type="email" value={notificationDraft.userEmail} onChange={(event) => setNotificationDraft((current) => ({ ...current, userEmail: event.target.value }))} className="h-10 w-full rounded-xl border border-[#DCE6F0] px-3 text-left text-xs outline-none focus:border-[#1769D5]" /></label><label className="block"><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">العنوان</span><input value={notificationDraft.title} onChange={(event) => setNotificationDraft((current) => ({ ...current, title: event.target.value }))} className="h-10 w-full rounded-xl border border-[#DCE6F0] px-3 text-xs outline-none focus:border-[#1769D5]" /></label><label className="block"><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">الرسالة</span><textarea rows={4} value={notificationDraft.message} onChange={(event) => setNotificationDraft((current) => ({ ...current, message: event.target.value }))} className="w-full resize-none rounded-xl border border-[#DCE6F0] p-3 text-xs outline-none focus:border-[#1769D5]" /></label></div><DialogFooter className="sm:justify-start"><Button type="button" variant="outline" onClick={() => setNotificationDialogOpen(false)} className="border-[#D9E5F2] text-[#58708B]">إلغاء</Button><Button type="button" disabled={sendingNotification} onClick={() => void sendNotification()} className="bg-[#1769D5] text-white hover:bg-[#0F56B4]">{sendingNotification ? "جارٍ الإرسال…" : "تأكيد إرسال الإشعار"}</Button></DialogFooter></DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(notificationPendingDeletion)} onOpenChange={(open) => { if (!open) setNotificationPendingDeletion(null); }}>
+        <DialogContent dir="rtl" className="max-w-lg border-[#F2C8CE] bg-white text-right"><DialogHeader className="text-right"><DialogTitle className="font-display text-xl text-[#A22D3A]">حذف إشعار</DialogTitle><DialogDescription className="text-right text-xs leading-6 text-[#6C7D91]">حذف الإشعار يزيله من سجل المستخدم؛ راجعي عنوانه قبل التأكيد.</DialogDescription></DialogHeader>{notificationPendingDeletion && <div className="rounded-xl bg-[#FFF4F5] p-4"><p className="text-sm font-bold text-[#75303A]">{notificationPendingDeletion.title || "إشعار ORB"}</p><p className="mt-2 text-xs text-[#8A5960]">{notificationPendingDeletion.message || "—"}</p></div>}<DialogFooter className="sm:justify-start"><Button type="button" variant="outline" onClick={() => setNotificationPendingDeletion(null)} className="border-[#E6C8CD] text-[#87616A]">إلغاء</Button><Button type="button" disabled={deletingNotification} onClick={() => void deleteNotification()} className="bg-[#B12D3B] text-white hover:bg-[#94212D]">{deletingNotification ? "جارٍ الحذف…" : "تأكيد حذف الإشعار"}</Button></DialogFooter></DialogContent>
       </Dialog>
     </div>
   );
