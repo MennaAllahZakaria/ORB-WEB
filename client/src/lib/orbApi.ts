@@ -69,7 +69,50 @@ export type ApiDispute = {
   createdAt?: string;
 };
 
-type ApiEnvelope<T> = { status?: string; message?: string; data?: T; results?: number };
+export type ApiDashboardSummary = {
+  generatedAt?: string;
+  counts: {
+    pendingTeachers: number;
+    teacherTotal: number;
+    studentTotal: number;
+    lessonIssues: number;
+    openDisputes: number;
+    pendingPayouts: number;
+    openSupportTickets: number;
+  };
+  queues: {
+    pendingTeachers: ApiUser[];
+    openDisputes: ApiDispute[];
+    pendingPayouts: ApiPayout[];
+  };
+};
+
+export type ApiAuditLog = {
+  _id: string;
+  actorId?: ApiUser | string | null;
+  actorRole?: ApiUser["role"];
+  action: string;
+  entityType: string;
+  entityId?: string;
+  before?: Record<string, unknown>;
+  after?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  requestId?: string;
+  createdAt?: string;
+};
+
+export type ApiPagination = { page: number; limit: number; total: number; totalPages: number };
+
+export type ApiDisputedLesson = ApiLesson & {
+  student?: ApiUser | string;
+  acceptedTeacher?: ApiUser | string;
+  paymentStatus?: string;
+  adminNote?: string;
+  completedAt?: string;
+  updatedAt?: string;
+};
+
+export type ApiEnvelope<T> = { status?: string; message?: string; data?: T; results?: number; pagination?: ApiPagination };
 
 const apiBaseUrl = (import.meta.env.VITE_ORB_API_BASE_URL ?? "").replace(/\/$/, "");
 

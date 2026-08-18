@@ -7,8 +7,8 @@ import OrbLogo from "@/components/OrbLogo";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useOrbAuth } from "@/contexts/OrbAuthContext";
-import { buildDisputeResolution, canFinalizeTeacherReview } from "@/lib/adminOperations";
-import { ApiDispute, ApiLesson, ApiNotification, ApiPayout, ApiSupportTicket, ApiUser, fullName, initials, orbApi } from "@/lib/orbApi";
+import { buildDisputeResolution, canFinalizeTeacherReview, isLessonAdminResolved } from "@/lib/adminOperations";
+import { ApiAuditLog, ApiDashboardSummary, ApiDispute, ApiDisputedLesson, ApiLesson, ApiNotification, ApiPayout, ApiSupportTicket, ApiUser, fullName, initials, orbApi } from "@/lib/orbApi";
 import {
   Table,
   TableBody,
@@ -31,6 +31,7 @@ import {
   Clock3,
   FileCheck2,
   ExternalLink,
+  Gavel,
   GraduationCap,
   LayoutDashboard,
   LifeBuoy,
@@ -38,6 +39,7 @@ import {
   Menu,
   MoreHorizontal,
   Search,
+  ScrollText,
   Settings2,
   ShieldCheck,
   Sparkles,
@@ -54,11 +56,13 @@ type NavigationKey =
   | "teachers"
   | "students"
   | "issues"
+  | "disputedLessons"
   | "disputes"
   | "payouts"
   | "support"
   | "notifications"
   | "admins"
+  | "audit"
   | "settings";
 
 type Teacher = {
@@ -80,11 +84,13 @@ const navigation = [
   { id: "teachers" as const, label: "المدرسون", icon: GraduationCap },
   { id: "students" as const, label: "الطلاب", icon: Users },
   { id: "issues" as const, label: "الدروس محل المراجعة", icon: TriangleAlert },
+  { id: "disputedLessons" as const, label: "الحصص المتنازع عليها", icon: Gavel },
   { id: "disputes" as const, label: "النزاعات", icon: CircleDollarSign },
   { id: "payouts" as const, label: "التحويلات المالية", icon: WalletCards },
   { id: "support" as const, label: "طلبات الدعم", icon: LifeBuoy },
   { id: "notifications" as const, label: "الإشعارات", icon: Bell },
   { id: "admins" as const, label: "فريق الإدارة", icon: ShieldCheck },
+  { id: "audit" as const, label: "سجل التدقيق", icon: ScrollText },
 ];
 
 const iconButtonClass =
@@ -198,8 +204,10 @@ function EmptySection({ section }: { section: string }) {
 }
 
 export default function Home() {
-  const { user, token, logout } = useOrbAuth();
+  const { user, token, logout, isSuperAdmin } = useOrbAuth();
+  const superAdmin = isSuperAdmin();
   const [activeView, setActiveView] = useState<NavigationKey>("dashboard");
+  const [dashboardSummary, setDashboardSummary] = useState<ApiDashboardSummary | null>(null);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [allTeachers, setAllTeachers] = useState<Teacher[]>([]);
   const [students, setStudents] = useState<ApiUser[]>([]);
@@ -208,18 +216,28 @@ export default function Home() {
   const [studentTotal, setStudentTotal] = useState(0);
   const [issues, setIssues] = useState<ApiLesson[]>([]);
   const [disputes, setDisputes] = useState<ApiDispute[]>([]);
+  const [disputedLessons, setDisputedLessons] = useState<ApiDisputedLesson[]>([]);
   const [payouts, setPayouts] = useState<ApiPayout[]>([]);
   const [supportTickets, setSupportTickets] = useState<ApiSupportTicket[]>([]);
   const [notifications, setNotifications] = useState<ApiNotification[]>([]);
   const [dataLoading, setDataLoading] = useState(true);
   const [dataError, setDataError] = useState<string | null>(null);
+  const [loadingTeacherDetails, setLoadingTeacherDetails] = useState<string | null>(null);
+  const [sectionLoading, setSectionLoading] = useState<NavigationKey | null>(null);
+  const [sectionErrors, setSectionErrors] = useState<Partial<Record<NavigationKey, string>>>({});
+  const [loadedViews, setLoadedViews] = useState<Partial<Record<NavigationKey, boolean>>>({});
   const [reviewingTeacher, setReviewingTeacher] = useState<string | null>(null);
   const [selectedTeacher, setSelectedTeacher] = useState<Teacher | null>(null);
   const [teacherReviewNote, setTeacherReviewNote] = useState("");
   const [selectedDispute, setSelectedDispute] = useState<ApiDispute | null>(null);
   const [disputeDecision, setDisputeDecision] = useState<"refund" | "release" | "partial">("refund");
   const [refundAmount, setRefundAmount] = useState("");
+  const [disputeNote, setDisputeNote] = useState("");
   const [resolvingDispute, setResolvingDispute] = useState(false);
+  const [selectedDisputedLesson, setSelectedDisputedLesson] = useState<ApiDisputedLesson | null>(null);
+  const [lessonFinalStatus, setLessonFinalStatus] = useState<"completed" | "incomplete">("completed");
+  const [lessonAdminNote, setLessonAdminNote] = useState("");
+  const [resolvingLesson, setResolvingLesson] = useState(false);
   const [updatingTicket, setUpdatingTicket] = useState<string | null>(null);
   const [markingNotification, setMarkingNotification] = useState<string | null>(null);
   const [selectedStudent, setSelectedStudent] = useState<ApiUser | null>(null);
@@ -240,6 +258,14 @@ export default function Home() {
   const [sendingNotification, setSendingNotification] = useState(false);
   const [notificationPendingDeletion, setNotificationPendingDeletion] = useState<ApiNotification | null>(null);
   const [deletingNotification, setDeletingNotification] = useState(false);
+  const [auditLogs, setAuditLogs] = useState<ApiAuditLog[]>([]);
+  const [auditAction, setAuditAction] = useState("");
+  const [auditEntityType, setAuditEntityType] = useState("");
+  const [auditActorId, setAuditActorId] = useState("");
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditPagination, setAuditPagination] = useState({ page: 1, limit: 20, total: 0, totalPages: 1 });
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [query, setQuery] = useState("");
 
@@ -263,39 +289,112 @@ export default function Home() {
     };
   }, []);
 
+  const openTeacherReview = async (teacher: Teacher) => {
+    if (!token) return;
+    setLoadingTeacherDetails(teacher.id);
+    try {
+      const response = await orbApi<ApiUser>(`/admin/teachers/${teacher.id}`, { token });
+      const detailedTeacher = response.data;
+      setSelectedTeacher(detailedTeacher ? mapTeacher(detailedTeacher, 0) : teacher);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر تحميل تفاصيل المدرس.");
+    } finally { setLoadingTeacherDetails(null); }
+  };
+
   const loadDashboardData = useCallback(async () => {
     if (!token) return;
     setDataLoading(true);
     setDataError(null);
     try {
-      const [pendingResponse, allTeachersResponse, studentsResponse, issuesResponse, disputesResponse, payoutsResponse, supportResponse, notificationsResponse, adminsResponse] = await Promise.all([
-        orbApi<ApiUser[]>("/admin/teachers/pending", { token }),
-        orbApi<ApiUser[]>("/admin/teachers/all", { token }),
-        orbApi<ApiUser[]>("/admin/students/all", { token }),
-        orbApi<ApiLesson[]>("/admin/lessons/issues", { token }),
-        orbApi<ApiDispute[]>("/disputes", { token }),
-        orbApi<ApiPayout[]>("/payouts", { token }),
-        orbApi<ApiSupportTicket[]>("/support", { token }),
-        orbApi<ApiNotification[]>("/notifications/all", { token }),
-        orbApi<ApiUser[]>("/admin", { token }),
-      ]);
-      setTeachers((pendingResponse.data ?? []).map(mapTeacher));
-      setAllTeachers((allTeachersResponse.data ?? []).map(mapTeacher));
-      setStudents(studentsResponse.data ?? []);
-      setAdmins(adminsResponse.data ?? []);
-      setTeacherTotal(allTeachersResponse.data?.length ?? allTeachersResponse.results ?? 0);
-      setStudentTotal(studentsResponse.data?.length ?? studentsResponse.results ?? 0);
-      setIssues(issuesResponse.data ?? []);
-      setDisputes(disputesResponse.data ?? []);
-      setPayouts(payoutsResponse.data ?? []);
-      setSupportTickets(supportResponse.data ?? []);
-      setNotifications(notificationsResponse.data ?? []);
+      const summaryResponse = await orbApi<ApiDashboardSummary>("/admin/dashboard/summary", { token });
+      const summary = summaryResponse.data;
+      if (!summary) throw new Error("استجابة ملخص العمليات غير مكتملة.");
+      setDashboardSummary(summary);
+      setTeachers((summary.queues.pendingTeachers ?? []).map(mapTeacher));
+      setTeacherTotal(summary.counts.teacherTotal);
+      setStudentTotal(summary.counts.studentTotal);
     } catch (error) {
       setDataError(error instanceof Error ? error.message : "تعذر تحميل بيانات لوحة ORB.");
     } finally { setDataLoading(false); }
   }, [mapTeacher, token]);
 
   useEffect(() => { void loadDashboardData(); }, [loadDashboardData]);
+
+  const loadViewData = useCallback(async (view: NavigationKey) => {
+    if (!token) return;
+    if (loadedViews[view]) return;
+    const needsLoad = ["teachers", "students", "issues", "disputes", "disputedLessons", "payouts", "support", "notifications", "admins"].includes(view);
+    if (!needsLoad) return;
+    setDataLoading(true);
+    setSectionLoading(view);
+    setSectionErrors((current) => ({ ...current, [view]: undefined }));
+    try {
+      if (view === "teachers") {
+        const response = await orbApi<ApiUser[]>("/admin/teachers/all", { token });
+        setAllTeachers((response.data ?? []).map(mapTeacher));
+      }
+      if (view === "students") {
+        const response = await orbApi<ApiUser[]>("/admin/students/all", { token });
+        setStudents(response.data ?? []);
+      }
+      if (view === "issues") {
+        const response = await orbApi<ApiLesson[]>("/admin/lessons/issues", { token });
+        setIssues(response.data ?? []);
+      }
+      if (view === "disputes") {
+        const response = await orbApi<ApiDispute[]>("/disputes", { token });
+        setDisputes(response.data ?? []);
+      }
+      if (view === "disputedLessons") {
+        const response = await orbApi<ApiDisputedLesson[]>("/completeLessons/disputedLessons?page=1&limit=50", { token });
+        setDisputedLessons(response.data ?? []);
+      }
+      if (view === "payouts") {
+        const response = await orbApi<ApiPayout[]>("/payouts", { token });
+        setPayouts(response.data ?? []);
+      }
+      if (view === "support") {
+        const response = await orbApi<ApiSupportTicket[]>("/support", { token });
+        setSupportTickets(response.data ?? []);
+      }
+      if (view === "notifications") {
+        const response = await orbApi<ApiNotification[]>("/notifications/all", { token });
+        setNotifications(response.data ?? []);
+      }
+      if (view === "admins") {
+        const response = await orbApi<ApiUser[]>("/admin", { token });
+        setAdmins(response.data ?? []);
+      }
+      setLoadedViews((current) => ({ ...current, [view]: true }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "تعذر تحميل بيانات هذا القسم.";
+      setSectionErrors((current) => ({ ...current, [view]: message }));
+      toast.error(message);
+    } finally { setSectionLoading(null); setDataLoading(false); }
+  }, [loadedViews, mapTeacher, token]);
+
+  const loadAuditLogs = useCallback(async () => {
+    if (!token || !superAdmin) return;
+    setAuditLoading(true);
+    setAuditError(null);
+    try {
+      const params = new URLSearchParams({ page: String(auditPage), limit: "20" });
+      if (auditAction.trim()) params.set("action", auditAction.trim());
+      if (auditEntityType.trim()) params.set("entityType", auditEntityType.trim());
+      if (auditActorId.trim()) params.set("actorId", auditActorId.trim());
+      const response = await orbApi<ApiAuditLog[]>(`/audit-logs?${params.toString()}`, { token });
+      setAuditLogs(response.data ?? []);
+      if (response.pagination) setAuditPagination(response.pagination);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "تعذر تحميل سجل التدقيق.";
+      setAuditError(message);
+      toast.error(message);
+    } finally { setAuditLoading(false); }
+  }, [auditAction, auditActorId, auditEntityType, auditPage, superAdmin, token]);
+
+  useEffect(() => {
+    if (activeView === "audit") void loadAuditLogs();
+  }, [activeView, loadAuditLogs]);
 
   const pendingTeachers = useMemo(
     () =>
@@ -308,7 +407,7 @@ export default function Home() {
   );
 
   const reviewTeacher = async (id: string, status: "approved" | "rejected") => {
-    const teacher = teachers.find((item) => item.id === id);
+    const teacher = selectedTeacher?.id === id ? selectedTeacher : teachers.find((item) => item.id === id);
     if (!token || !teacher) return;
     setReviewingTeacher(id);
     try {
@@ -327,7 +426,7 @@ export default function Home() {
 
   const resolveDispute = async () => {
     if (!token || !selectedDispute) return;
-    const resolution = buildDisputeResolution(disputeDecision, refundAmount);
+    const resolution = buildDisputeResolution(disputeDecision, refundAmount, disputeNote);
     if (!resolution) {
       toast.error("أدخلي مبلغ الاسترداد الجزئي أولاً.");
       return;
@@ -338,9 +437,33 @@ export default function Home() {
       toast.success("تم تسجيل قرار حل النزاع وإرسال التحديث إلى الأطراف.");
       setSelectedDispute(null);
       setRefundAmount("");
+      setDisputeNote("");
+      setDisputes((current) => current.map((item) => item._id === selectedDispute._id ? { ...item, status: "resolved", resolution } : item));
       await loadDashboardData();
     } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حل النزاع."); }
     finally { setResolvingDispute(false); }
+  };
+
+  const resolveDisputedLesson = async () => {
+    if (!token || !selectedDisputedLesson) return;
+    if (!lessonAdminNote.trim()) {
+      toast.error("أدخلي ملاحظة واضحة قبل اعتماد قرار الحصة.");
+      return;
+    }
+    setResolvingLesson(true);
+    try {
+      await orbApi<ApiDisputedLesson>(`/completeLessons/${selectedDisputedLesson._id}/adminResolve`, {
+        token,
+        method: "PUT",
+        body: { finalStatus: lessonFinalStatus, adminNote: lessonAdminNote.trim() },
+      });
+      toast.success("تم حسم الحصة المتنازع عليها وتسجيل ملاحظة الأدمن.");
+      setDisputedLessons((current) => current.map((lesson) => lesson._id === selectedDisputedLesson._id ? { ...lesson, finalCompletionStatus: lessonFinalStatus, adminNote: lessonAdminNote.trim() } : lesson));
+      setSelectedDisputedLesson(null);
+      setLessonAdminNote("");
+      await loadDashboardData();
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حسم الحصة المتنازع عليها."); }
+    finally { setResolvingLesson(false); }
   };
 
   const updateSupportTicket = async (ticket: ApiSupportTicket, nextStatus: "open" | "closed") => {
@@ -389,7 +512,7 @@ export default function Home() {
   };
 
   const createAdmin = async () => {
-    if (!token) return;
+    if (!token || !superAdmin) return;
     if (!newAdmin.firstName.trim() || !newAdmin.lastName.trim() || !newAdmin.email.trim()) {
       toast.error("أدخلي الاسم الأول واسم العائلة والبريد الإلكتروني.");
       return;
@@ -406,7 +529,7 @@ export default function Home() {
   };
 
   const removeAdmin = async () => {
-    if (!token || !adminPendingRemoval) return;
+    if (!token || !superAdmin || !adminPendingRemoval) return;
     setRemovingAdmin(true);
     try {
       await orbApi<{ message: string }>(`/admin/${adminPendingRemoval._id}`, { token, method: "DELETE" });
@@ -418,7 +541,7 @@ export default function Home() {
   };
 
   const saveAdminEdit = async () => {
-    if (!token || !editingAdmin) return;
+    if (!token || !superAdmin || !editingAdmin) return;
     if (!adminEdit.firstName.trim() || !adminEdit.lastName.trim() || !adminEdit.email.trim()) {
       toast.error("أدخلي الاسم الأول واسم العائلة والبريد الإلكتروني.");
       return;
@@ -463,19 +586,22 @@ export default function Home() {
   };
 
   const changeView = (view: NavigationKey) => {
+    if (view === "audit" && !superAdmin) return;
     setActiveView(view);
     setMobileMenuOpen(false);
+    void loadViewData(view);
   };
 
   const activeTitle = navigation.find((item) => item.id === activeView)?.label ?? "نظرة عامة";
   const adminName = fullName(user);
   const adminInitial = adminName.charAt(0);
   const navigationCount = (id: NavigationKey) => {
-    if (id === "teachers") return teachers.length;
-    if (id === "issues") return issues.length;
-    if (id === "disputes") return disputes.filter((dispute) => dispute.status !== "resolved").length;
-    if (id === "payouts") return payouts.filter((payout) => payout.status !== "completed").length;
-    if (id === "support") return supportTickets.filter((ticket) => ticket.status !== "closed").length;
+    if (id === "teachers") return dashboardSummary?.counts.pendingTeachers ?? teachers.length;
+    if (id === "issues") return dashboardSummary?.counts.lessonIssues ?? issues.length;
+    if (id === "disputedLessons") return disputedLessons.filter((lesson) => lesson.finalCompletionStatus !== "completed" && lesson.finalCompletionStatus !== "incomplete").length;
+    if (id === "disputes") return dashboardSummary?.counts.openDisputes ?? disputes.filter((dispute) => dispute.status !== "resolved").length;
+    if (id === "payouts") return dashboardSummary?.counts.pendingPayouts ?? payouts.filter((payout) => payout.status !== "completed").length;
+    if (id === "support") return dashboardSummary?.counts.openSupportTickets ?? supportTickets.filter((ticket) => ticket.status !== "closed").length;
     if (id === "notifications") return notifications.filter((notification) => !notification.read).length;
     return 0;
   };
@@ -488,7 +614,7 @@ export default function Home() {
           <p className="text-[10px] font-bold tracking-[0.18em] text-[#92A0B1]">مركز التشغيل</p>
         </div>
         <nav aria-label="التنقل الرئيسي" className="mt-3 space-y-1">
-          {navigation.map((item) => {
+          {navigation.filter((item) => item.id !== "audit" || superAdmin).map((item) => {
             const Icon = item.icon;
             const isActive = activeView === item.id;
             return (
@@ -527,7 +653,7 @@ export default function Home() {
           <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#F4B942] font-display text-xs font-bold text-[#102A4B]">{adminInitial}</div>
           <div className="min-w-0 flex-1">
             <p className="truncate text-[11px] font-bold">{adminName}</p>
-            <p className="mt-0.5 text-[9px] text-white/60">مشرفة المنصة</p>
+            <p className="mt-0.5 text-[9px] text-white/60">{superAdmin ? "Super Admin" : "إدارة المنصة"}</p>
           </div>
           <button type="button" aria-label="تسجيل الخروج" onClick={() => void logout()} className="grid h-8 w-8 place-items-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white"><LogOut size={16} /></button>
         </div>
@@ -541,7 +667,7 @@ export default function Home() {
               <button type="button" aria-label="إغلاق القائمة" onClick={() => setMobileMenuOpen(false)} className={iconButtonClass}><X size={19} /></button>
             </div>
             <nav aria-label="التنقل على الجوال" className="mt-9 space-y-1">
-              {navigation.map((item) => {
+              {navigation.filter((item) => item.id !== "audit" || superAdmin).map((item) => {
                 const Icon = item.icon;
                 const isActive = activeView === item.id;
                 return <button key={item.id} type="button" onClick={() => changeView(item.id)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-right text-xs font-semibold ${isActive ? "bg-[#EAF2FF] text-[#1769D5]" : "text-[#56677B]"}`}><Icon size={19} /><span>{item.label}</span></button>;
@@ -577,6 +703,8 @@ export default function Home() {
         </header>
 
         <div className="mx-auto max-w-[1560px] px-4 pb-28 pt-7 sm:px-7 sm:pt-9 lg:px-10 lg:pb-10">
+          {sectionLoading === activeView && <div className="mb-5 flex items-center gap-3 rounded-2xl border border-[#D5E4F5] bg-[#F4F9FF] px-4 py-3 text-xs font-semibold text-[#1769D5]"><Clock3 size={16} className="animate-spin" />جارٍ تحميل بيانات {activeTitle} من ORB…</div>}
+          {sectionErrors[activeView] && <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#F5C8CE] bg-[#FFF6F7] px-4 py-3 text-xs text-[#9B2634]"><span>تعذر تحميل {activeTitle}: {sectionErrors[activeView]}</span><button type="button" onClick={() => { setLoadedViews((current) => ({ ...current, [activeView]: false })); void loadViewData(activeView); }} className="font-bold underline">إعادة المحاولة</button></div>}
           {activeView === "dashboard" ? (
             <section className="space-y-7">
               {dataError && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#F5C8CE] bg-[#FFF6F7] px-4 py-3 text-xs text-[#9B2634]"><span>تعذر تحميل بيانات ORB: {dataError}</span><button type="button" onClick={() => void loadDashboardData()} className="font-bold underline">إعادة المحاولة</button></div>}
@@ -607,9 +735,9 @@ export default function Home() {
                 </div>
                 <div className="relative mt-8 grid grid-cols-3 divide-x divide-x-reverse divide-white/15 border-t border-white/12 pt-5 lg:mt-10 lg:max-w-xl">
                   {[
-                    [String(teachers.length), "طلبات تحقق"],
-                    [String(issues.length), "دروس تحتاج مراجعة"],
-                    [String(payouts.filter((payout) => payout.status !== "completed").length), "تحويلات معلّقة"],
+                    [String(dashboardSummary?.counts.pendingTeachers ?? teachers.length), "طلبات تحقق"],
+                    [String(dashboardSummary?.counts.lessonIssues ?? issues.length), "دروس تحتاج مراجعة"],
+                    [String(dashboardSummary?.counts.pendingPayouts ?? payouts.filter((payout) => payout.status !== "completed").length), "تحويلات معلّقة"],
                   ].map(([value, label]) => (
                     <div key={label} className="px-3 first:pr-0">
                       <p dir="ltr" className="font-display text-right text-2xl font-bold tracking-[-0.05em] text-white">{value}</p>
@@ -620,10 +748,10 @@ export default function Home() {
               </div>
 
               <section className="orb-enter orb-enter-delay-1 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <KpiCard label="إجمالي المدرسين" value={String(teacherTotal)} support="من بيانات ORB الحالية" icon={GraduationCap} accent="blue" />
-                <KpiCard label="إجمالي الطلاب" value={String(studentTotal)} support="من بيانات ORB الحالية" icon={Users} accent="teal" />
-                <KpiCard label="دروس قيد المراجعة" value={String(issues.length)} support="مشكلات أو نزاعات مسجلة" icon={BookOpenText} accent="gold" />
-                <KpiCard label="تحويلات معلّقة" value={String(payouts.filter((payout) => payout.status !== "completed").length)} support="من سجل التحويلات" icon={WalletCards} accent="blue" />
+                <KpiCard label="إجمالي المدرسين" value={String(dashboardSummary?.counts.teacherTotal ?? teacherTotal)} support="من ملخص ORB الحالي" icon={GraduationCap} accent="blue" />
+                <KpiCard label="إجمالي الطلاب" value={String(dashboardSummary?.counts.studentTotal ?? studentTotal)} support="من ملخص ORB الحالي" icon={Users} accent="teal" />
+                <KpiCard label="دروس قيد المراجعة" value={String(dashboardSummary?.counts.lessonIssues ?? issues.length)} support="مشكلات أو نزاعات مسجلة" icon={BookOpenText} accent="gold" />
+                <KpiCard label="تحويلات معلّقة" value={String(dashboardSummary?.counts.pendingPayouts ?? payouts.filter((payout) => payout.status !== "completed").length)} support="من ملخص ORB الحالي" icon={WalletCards} accent="blue" />
               </section>
 
               <section className="orb-enter orb-enter-delay-2 grid gap-6 xl:grid-cols-[minmax(0,1.56fr)_minmax(320px,0.85fr)]">
@@ -668,7 +796,7 @@ export default function Home() {
                             <TableCell className="py-3.5 text-right"><StatusPill tone="blue"><FileCheck2 size={12} />{teacher.documents} ملفات</StatusPill></TableCell>
                             <TableCell className="py-3.5 text-right text-[10px] text-[#718195]">{teacher.submitted}</TableCell>
                             <TableCell className="py-3.5 text-center">
-                              <button type="button" onClick={() => setSelectedTeacher(teacher)} className="inline-flex items-center gap-1.5 rounded-lg border border-[#CFE0F5] bg-[#F7FAFE] px-3 py-2 text-[10px] font-bold text-[#1769D5] transition hover:bg-[#EAF2FF]"><FileCheck2 size={13} />مراجعة الشهادة</button>
+                              <button type="button" disabled={loadingTeacherDetails === teacher.id} onClick={() => void openTeacherReview(teacher)} className="inline-flex items-center gap-1.5 rounded-lg border border-[#CFE0F5] bg-[#F7FAFE] px-3 py-2 text-[10px] font-bold text-[#1769D5] transition hover:bg-[#EAF2FF] disabled:opacity-60"><FileCheck2 size={13} />{loadingTeacherDetails === teacher.id ? "جارٍ التحميل…" : "مراجعة الشهادة"}</button>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -680,7 +808,7 @@ export default function Home() {
                       <div key={teacher.id} className="rounded-2xl border border-[#E7EDF4] p-3.5">
                         <div className="flex items-start justify-between gap-2"><MiniAvatar teacher={teacher} /><StatusPill tone="blue">{teacher.documents} ملفات</StatusPill></div>
                         <p className="mt-3 text-xs font-bold text-[#233B59]">{teacher.name}</p><p className="mt-1 text-[10px] text-[#728196]">{teacher.subject} · {teacher.city}</p>
-                        <button type="button" onClick={() => setSelectedTeacher(teacher)} className="mt-3 w-full rounded-lg border border-[#CFE0F5] bg-[#F7FAFE] py-2 text-[10px] font-bold text-[#1769D5]">مراجعة الشهادة والقرار</button>
+                        <button type="button" disabled={loadingTeacherDetails === teacher.id} onClick={() => void openTeacherReview(teacher)} className="mt-3 w-full rounded-lg border border-[#CFE0F5] bg-[#F7FAFE] py-2 text-[10px] font-bold text-[#1769D5] disabled:opacity-60">{loadingTeacherDetails === teacher.id ? "جارٍ التحميل…" : "مراجعة الشهادة والقرار"}</button>
                       </div>
                     ))}
                   </div>
@@ -692,7 +820,7 @@ export default function Home() {
                     <img src="/manus-storage/orb-approval-illustration_0fbc4396.jpg" alt="مراجعة طلب انضمام مدرس" className="absolute inset-y-0 left-0 w-[47%] object-cover opacity-20" />
                     <div className="relative">
                       <div className="flex items-center justify-between"><span className="grid h-9 w-9 place-items-center rounded-xl bg-[#FFF4D7] text-[#B87900]"><Clock3 size={18} /></span><StatusPill tone="gold">أولوية اليوم</StatusPill></div>
-                      <h3 className="font-display mt-5 max-w-[230px] text-xl font-bold leading-8 text-[#102A4B]">{teachers.length} طلب تحقق ينتظر المراجعة</h3>
+                      <h3 className="font-display mt-5 max-w-[230px] text-xl font-bold leading-8 text-[#102A4B]">{dashboardSummary?.counts.pendingTeachers ?? teachers.length} طلب تحقق ينتظر المراجعة</h3>
                       <p className="mt-2 max-w-[240px] text-[11px] leading-6 text-[#6D7C8F]">هذا الرقم مسترجع مباشرة من الطلبات المعلّقة في ORB.</p>
                       <button type="button" onClick={() => changeView("teachers")} className="mt-5 inline-flex items-center gap-2 text-[11px] font-bold text-[#1769D5] transition hover:gap-3">افتحي قائمة المدرسين <ArrowUpLeft size={15} /></button>
                     </div>
@@ -711,7 +839,7 @@ export default function Home() {
               <section className="orb-enter orb-enter-delay-3 grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
                 <article className="rounded-3xl border border-[#E5EBF2] bg-white p-5 soft-shadow sm:p-6">
                   <div><p className="text-[10px] font-bold tracking-[0.13em] text-[#1769D5]">نبض المنصة</p><h3 className="font-display mt-2 text-lg font-bold text-[#102A4B]">لقطة تشغيلية حية</h3></div>
-                  <div className="mt-7 grid gap-3 sm:grid-cols-3"><div className="rounded-2xl bg-[#EAF2FF] p-4"><p className="text-[10px] text-[#59718D]">طلبات تحقق</p><p className="mt-2 text-2xl font-bold text-[#1769D5]">{teachers.length}</p></div><div className="rounded-2xl bg-[#FFF4D7] p-4"><p className="text-[10px] text-[#7B6A45]">دروس للمراجعة</p><p className="mt-2 text-2xl font-bold text-[#A76D00]">{issues.length}</p></div><div className="rounded-2xl bg-[#E1F5EE] p-4"><p className="text-[10px] text-[#4B786A]">تحويلات معلّقة</p><p className="mt-2 text-2xl font-bold text-[#127054]">{payouts.filter((payout) => payout.status !== "completed").length}</p></div></div>
+                  <div className="mt-7 grid gap-3 sm:grid-cols-3"><div className="rounded-2xl bg-[#EAF2FF] p-4"><p className="text-[10px] text-[#59718D]">طلبات تحقق</p><p className="mt-2 text-2xl font-bold text-[#1769D5]">{dashboardSummary?.counts.pendingTeachers ?? teachers.length}</p></div><div className="rounded-2xl bg-[#FFF4D7] p-4"><p className="text-[10px] text-[#7B6A45]">دروس للمراجعة</p><p className="mt-2 text-2xl font-bold text-[#A76D00]">{dashboardSummary?.counts.lessonIssues ?? issues.length}</p></div><div className="rounded-2xl bg-[#E1F5EE] p-4"><p className="text-[10px] text-[#4B786A]">تحويلات معلّقة</p><p className="mt-2 text-2xl font-bold text-[#127054]">{dashboardSummary?.counts.pendingPayouts ?? payouts.filter((payout) => payout.status !== "completed").length}</p></div></div>
                   <p className="mt-5 text-[10px] leading-6 text-[#718095]">لا يقدم ORB API الحالي سلسلة زمنية يومية؛ لذلك تعرض هذه المساحة مؤشرات التشغيل الفعلية المتاحة الآن بدلاً من رسم تقديري.</p>
                 </article>
                 <article className="relative min-h-[245px] overflow-hidden rounded-3xl bg-[#EAF2FF] p-6">
@@ -727,8 +855,10 @@ export default function Home() {
             <section className="space-y-6"><SectionTitle eyebrow="إدارة الطلاب" title="الطلاب" description="راجعي حالة الحساب قبل تفعيله أو تعطيله أو حظره من خلال نافذة تأكيد واضحة." /><div className="overflow-hidden rounded-3xl border border-[#E5EBF2] bg-white soft-shadow"><Table><TableHeader><TableRow className="border-[#EAF0F5]"><TableHead className="text-right">الطالب</TableHead><TableHead className="text-right">البريد الإلكتروني</TableHead><TableHead className="text-right">الحالة</TableHead><TableHead className="text-center">الإدارة</TableHead></TableRow></TableHeader><TableBody>{students.map((student) => <TableRow key={student._id}><TableCell className="font-bold text-[#263E5C]">{fullName(student)}</TableCell><TableCell dir="ltr" className="text-right text-xs text-[#647386]">{student.email || "—"}</TableCell><TableCell><StatusPill tone={student.status === "banned" ? "red" : student.status === "inactive" ? "gold" : "teal"}>{student.status || "active"}</StatusPill></TableCell><TableCell className="text-center"><button type="button" onClick={() => { setSelectedStudent(student); setNextStudentStatus((student.status === "inactive" || student.status === "banned") ? student.status : "active"); }} className="rounded-lg border border-[#CFE0F5] bg-[#F7FAFE] px-3 py-2 text-[10px] font-bold text-[#1769D5]">مراجعة الحالة</button></TableCell></TableRow>)}</TableBody></Table>{!dataLoading && students.length === 0 && <p className="p-8 text-center text-xs text-[#718195]">لا توجد بيانات طلاب متاحة.</p>}</div></section>
           ) : activeView === "issues" ? (
             <section className="space-y-6"><SectionTitle eyebrow="مراجعة الدروس" title="الدروس محل المراجعة" description="الدروس التي أعاد ORB API تصنيفها كمشكلة أو غير مكتملة أو محل نزاع." /><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{issues.map((issue) => <article key={issue._id} className="rounded-2xl border border-[#E5EBF2] bg-white p-5 soft-shadow"><StatusPill tone={issue.disputeFlag || issue.reviewStatus === "disputed" ? "red" : "gold"}>{issue.disputeFlag ? "نزاع" : issue.reviewStatus || issue.status || "مراجعة"}</StatusPill><h3 className="mt-4 text-sm font-bold text-[#263E5C]">{issue.title || "درس بلا عنوان"}</h3><p className="mt-2 text-xs text-[#718195]">{issue.subject || "المادة غير محددة"}</p><p className="mt-3 text-[10px] text-[#8A97A5]">{issue.finalCompletionStatus || issue.status || "قيد المراجعة"}</p></article>)}</div>{!dataLoading && issues.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد دروس متاحة للمراجعة حالياً.</div>}</section>
+          ) : activeView === "disputedLessons" ? (
+            <section className="space-y-6"><SectionTitle eyebrow="مراجعة اكتمال الحصص" title="الحصص المتنازع عليها" description="حسم حالة الإتمام النهائية للحصة مع ملاحظة إدارية موثّقة قبل تحرير أو منع التسوية المرتبطة بها." /><div className="grid gap-4 lg:grid-cols-2">{disputedLessons.map((lesson) => { const studentName = typeof lesson.student === "string" ? "طالب ORB" : fullName(lesson.student); const teacherName = typeof lesson.acceptedTeacher === "string" ? "مدرس ORB" : fullName(lesson.acceptedTeacher); const resolved = isLessonAdminResolved(lesson.reviewStatus, lesson.adminNote); return <article key={lesson._id} className="rounded-3xl border border-[#E5EBF2] bg-white p-5 soft-shadow"><div className="flex items-start justify-between gap-3"><div><StatusPill tone={resolved ? "teal" : "red"}>{resolved ? "تم الحسم" : "يتطلب قراراً"}</StatusPill><h3 className="mt-3 text-sm font-bold text-[#263E5C]">{lesson.title || "حصة بلا عنوان"}</h3></div><span className="text-[10px] text-[#8A97A5]">{lesson.requestedDate ? new Date(lesson.requestedDate).toLocaleDateString("ar-EG") : "—"}</span></div><div className="mt-4 grid gap-2 rounded-xl bg-[#F8FAFD] p-3 text-[10px] text-[#64778D] sm:grid-cols-2"><p>الطالب: <strong className="text-[#354C68]">{studentName}</strong></p><p>المدرس: <strong className="text-[#354C68]">{teacherName}</strong></p><p>المادة: <strong className="text-[#354C68]">{lesson.subject || "—"}</strong></p><p>الدفع: <strong className="text-[#354C68]">{lesson.paymentStatus || "—"}</strong></p></div>{lesson.adminNote && <p className="mt-3 rounded-xl border border-[#D7E8DE] bg-[#F5FCF8] p-3 text-[10px] leading-6 text-[#237056]">ملاحظة الحسم: {lesson.adminNote}</p>}<div className="mt-4 flex items-center justify-between gap-3"><p className="text-[10px] text-[#8190A0]">الحالة: {lesson.finalCompletionStatus || lesson.reviewStatus || "قيد المراجعة"}</p>{!resolved && <button type="button" onClick={() => { setSelectedDisputedLesson(lesson); setLessonFinalStatus("completed"); setLessonAdminNote(""); }} className="rounded-lg bg-[#102A4B] px-3 py-2 text-[10px] font-bold text-white transition hover:bg-[#1769D5]">مراجعة وحسم</button>}</div></article>; })}</div>{!dataLoading && disputedLessons.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد حصص متنازع عليها حالياً.</div>}</section>
           ) : activeView === "disputes" ? (
-            <section className="space-y-6"><SectionTitle eyebrow="العدالة المالية" title="حل النزاعات" description="راجعي سبب النزاع والأدلة أولاً، ثم اختاري تحويل المبلغ للمدرس أو الاسترداد للطالب أو الاسترداد الجزئي." /><div className="grid gap-4 lg:grid-cols-2">{disputes.map((dispute) => { const lesson = typeof dispute.lessonId === "string" ? undefined : dispute.lessonId; const lessonTitle = lesson?.title || "درس مرتبط بالنزاع"; return <article key={dispute._id} className="rounded-3xl border border-[#E5EBF2] bg-white p-5 soft-shadow"><div className="flex items-start justify-between gap-3"><div><StatusPill tone={dispute.status === "resolved" ? "teal" : dispute.status === "under_review" ? "gold" : "red"}>{dispute.status === "resolved" ? "تم الحل" : dispute.status === "under_review" ? "قيد المراجعة" : "مفتوح"}</StatusPill><h3 className="mt-3 text-sm font-bold text-[#263E5C]">{lessonTitle}</h3></div><span className="text-[10px] text-[#8A97A5]">{dispute.createdAt ? new Date(dispute.createdAt).toLocaleDateString("ar-EG") : "—"}</span></div><div className="mt-4 rounded-xl bg-[#F8FAFD] p-3"><p className="text-[10px] font-bold text-[#53677F]">سبب النزاع: {dispute.reason || "other"}</p><p className="mt-2 text-[11px] leading-6 text-[#68788D]">{dispute.description || "لا يوجد وصف إضافي من مقدم النزاع."}</p></div>{dispute.evidence?.length ? <p className="mt-3 text-[10px] text-[#61758E]">{dispute.evidence.length} دليل مرفوع للمراجعة داخل نافذة الحل.</p> : null}<div className="mt-4 flex items-center justify-between gap-3">{dispute.resolution?.decision ? <p className="text-[10px] text-[#127054]">القرار: {dispute.resolution.decision}</p> : <p className="text-[10px] text-[#8A97A5]">بانتظار قرار الأدمن</p>}{dispute.status !== "resolved" && <button type="button" onClick={() => { setSelectedDispute(dispute); setDisputeDecision("refund"); setRefundAmount(""); }} className="rounded-lg bg-[#102A4B] px-3 py-2 text-[10px] font-bold text-white transition hover:bg-[#1769D5]">مراجعة وحل النزاع</button>}</div></article>; })}</div>{!dataLoading && disputes.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد نزاعات مسجلة حالياً.</div>}</section>
+            <section className="space-y-6"><SectionTitle eyebrow="العدالة المالية" title="حل النزاعات" description="راجعي سبب النزاع والأدلة أولاً، ثم اختاري تحويل المبلغ للمدرس أو الاسترداد للطالب أو الاسترداد الجزئي." /><div className="grid gap-4 lg:grid-cols-2">{disputes.map((dispute) => { const lesson = typeof dispute.lessonId === "string" ? undefined : dispute.lessonId; const lessonTitle = lesson?.title || "درس مرتبط بالنزاع"; return <article key={dispute._id} className="rounded-3xl border border-[#E5EBF2] bg-white p-5 soft-shadow"><div className="flex items-start justify-between gap-3"><div><StatusPill tone={dispute.status === "resolved" ? "teal" : dispute.status === "under_review" ? "gold" : "red"}>{dispute.status === "resolved" ? "تم الحل" : dispute.status === "under_review" ? "قيد المراجعة" : "مفتوح"}</StatusPill><h3 className="mt-3 text-sm font-bold text-[#263E5C]">{lessonTitle}</h3></div><span className="text-[10px] text-[#8A97A5]">{dispute.createdAt ? new Date(dispute.createdAt).toLocaleDateString("ar-EG") : "—"}</span></div><div className="mt-4 rounded-xl bg-[#F8FAFD] p-3"><p className="text-[10px] font-bold text-[#53677F]">سبب النزاع: {dispute.reason || "other"}</p><p className="mt-2 text-[11px] leading-6 text-[#68788D]">{dispute.description || "لا يوجد وصف إضافي من مقدم النزاع."}</p></div>{dispute.evidence?.length ? <p className="mt-3 text-[10px] text-[#61758E]">{dispute.evidence.length} دليل مرفوع للمراجعة داخل نافذة الحل.</p> : null}<div className="mt-4 flex items-center justify-between gap-3">{dispute.resolution?.decision ? <p className="text-[10px] text-[#127054]">القرار: {dispute.resolution.decision}</p> : <p className="text-[10px] text-[#8A97A5]">بانتظار قرار الأدمن</p>}{dispute.status !== "resolved" && <button type="button" onClick={() => { setSelectedDispute(dispute); setDisputeDecision("refund"); setRefundAmount(""); setDisputeNote(""); }} className="rounded-lg bg-[#102A4B] px-3 py-2 text-[10px] font-bold text-white transition hover:bg-[#1769D5]">مراجعة وحل النزاع</button>}</div></article>; })}</div>{!dataLoading && disputes.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد نزاعات مسجلة حالياً.</div>}</section>
           ) : activeView === "payouts" ? (
             <section className="space-y-6"><SectionTitle eyebrow="الإدارة المالية" title="التحويلات المالية" description="سجل التحويلات المتاح في ORB API. إتمام التحويل يفتح تأكيداً منفصلاً لأنه إجراء مالي مؤثر." /><div className="overflow-hidden rounded-3xl border border-[#E5EBF2] bg-white soft-shadow"><Table><TableHeader><TableRow className="border-[#EAF0F5]"><TableHead className="text-right">المعرّف</TableHead><TableHead className="text-right">المبلغ</TableHead><TableHead className="text-right">الطريقة</TableHead><TableHead className="text-right">الحالة</TableHead><TableHead className="text-center">الإجراء</TableHead></TableRow></TableHeader><TableBody>{payouts.map((payout) => <TableRow key={payout._id}><TableCell className="text-xs text-[#7D8B9C]">{payout._id}</TableCell><TableCell className="font-bold text-[#263E5C]">{payout.amount ?? 0}</TableCell><TableCell className="text-xs text-[#647386]">{payout.method || "—"}</TableCell><TableCell><StatusPill tone={payout.status === "completed" ? "teal" : "gold"}>{payout.status || "pending"}</StatusPill></TableCell><TableCell className="text-center">{payout.status !== "completed" && <button type="button" onClick={() => setSelectedPayout(payout)} className="rounded-lg bg-[#102A4B] px-3 py-2 text-[10px] font-bold text-white">تأكيد الإتمام</button>}</TableCell></TableRow>)}</TableBody></Table>{!dataLoading && payouts.length === 0 && <p className="p-8 text-center text-xs text-[#718195]">لا توجد تحويلات متاحة.</p>}</div></section>
           ) : activeView === "support" ? (
@@ -736,7 +866,33 @@ export default function Home() {
           ) : activeView === "notifications" ? (
             <section className="space-y-6"><SectionTitle eyebrow="اتصالات المنصة" title="الإشعارات" description="إرسال رسائل للمستخدمين ومراجعة الرسائل الحالية، مع تعليمها كمقروء أو حذفها بعد التحقق." action={<Button type="button" onClick={() => setNotificationDialogOpen(true)} className="bg-[#1769D5] text-xs text-white hover:bg-[#0F56B4]"><Bell size={16} />إرسال إشعار</Button>} /><div className="space-y-3">{notifications.map((notification) => <article key={notification._id} className={`rounded-2xl border p-5 soft-shadow ${notification.read ? "border-[#E5EBF2] bg-white" : "border-[#BFD6F5] bg-[#F7FBFF]"}`}><div className="flex items-start justify-between gap-3"><div><StatusPill tone={notification.read ? "teal" : "blue"}>{notification.read ? "مقروء" : "جديد"}</StatusPill><h3 className="mt-3 text-sm font-bold text-[#263E5C]">{notification.title || "إشعار ORB"}</h3></div><span className="text-[10px] text-[#8A97A5]">{notification.createdAt ? new Date(notification.createdAt).toLocaleDateString("ar-EG") : "—"}</span></div><p className="mt-3 text-xs leading-6 text-[#68788D]">{notification.message || "لا توجد رسالة إضافية."}</p><div className="mt-4 flex gap-4">{!notification.read && <button type="button" disabled={markingNotification === notification._id} onClick={() => void markNotificationRead(notification)} className="text-[10px] font-bold text-[#1769D5] disabled:opacity-60">تعليم كمقروء</button>}<button type="button" onClick={() => setNotificationPendingDeletion(notification)} className="text-[10px] font-bold text-[#B12D3B]">حذف</button></div></article>)}</div>{!dataLoading && notifications.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد إشعارات متاحة.</div>}</section>
           ) : activeView === "admins" ? (
-            <section className="space-y-6"><SectionTitle eyebrow="فريق الإدارة" title="حسابات الأدمن" description="إنشاء وتعديل وحذف حسابات الإدارة من خلال تأكيدات واضحة ومسارات ORB الفعلية." action={<Button type="button" onClick={() => setAdminDialogOpen(true)} className="bg-[#1769D5] text-xs text-white hover:bg-[#0F56B4]"><ShieldCheck size={16} />إضافة أدمن</Button>} /><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{admins.map((admin) => <article key={admin._id} className="rounded-2xl border border-[#E5EBF2] bg-white p-5 soft-shadow"><div className="flex items-start justify-between gap-3"><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#FFF4D7] font-bold text-[#8F5C00]">{initials(fullName(admin))}</div>{admin._id !== user?._id && <div className="flex gap-2"><button type="button" onClick={() => { setEditingAdmin(admin); setAdminEdit({ firstName: admin.firstName || "", lastName: admin.lastName || "", email: admin.email || "", phone: admin.phone || "" }); }} className="rounded-lg bg-[#EAF2FF] px-2.5 py-2 text-[10px] font-bold text-[#1769D5]">تعديل</button><button type="button" onClick={() => setAdminPendingRemoval(admin)} className="rounded-lg bg-[#FFF1F2] px-2.5 py-2 text-[10px] font-bold text-[#B12D3B]">حذف</button></div>}</div><h3 className="mt-4 text-sm font-bold text-[#263E5C]">{fullName(admin)}</h3><p dir="ltr" className="mt-2 text-right text-xs text-[#718195]">{admin.email || "—"}</p><p dir="ltr" className="mt-1 text-right text-[10px] text-[#8A97A5]">{admin.phone || "—"}</p><div className="mt-3"><StatusPill tone="blue">admin</StatusPill></div></article>)}</div>{!dataLoading && admins.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد بيانات فريق إدارة متاحة.</div>}</section>
+            <section className="space-y-6"><SectionTitle eyebrow="فريق الإدارة" title="حسابات الأدمن" description={superAdmin ? "إنشاء وتعديل وحذف حسابات الإدارة من خلال تأكيدات واضحة ومسارات ORB الفعلية." : "راجعي فريق الإدارة. تظل إدارة الحسابات الحساسة محصورة بحساب Super Admin."} action={superAdmin ? <Button type="button" onClick={() => setAdminDialogOpen(true)} className="bg-[#1769D5] text-xs text-white hover:bg-[#0F56B4]"><ShieldCheck size={16} />إضافة أدمن</Button> : undefined} /><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{admins.map((admin) => <article key={admin._id} className="rounded-2xl border border-[#E5EBF2] bg-white p-5 soft-shadow"><div className="flex items-start justify-between gap-3"><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#FFF4D7] font-bold text-[#8F5C00]">{initials(fullName(admin))}</div>{superAdmin && admin._id !== user?._id && <div className="flex gap-2"><button type="button" onClick={() => { setEditingAdmin(admin); setAdminEdit({ firstName: admin.firstName || "", lastName: admin.lastName || "", email: admin.email || "", phone: admin.phone || "" }); }} className="rounded-lg bg-[#EAF2FF] px-2.5 py-2 text-[10px] font-bold text-[#1769D5]">تعديل</button><button type="button" onClick={() => setAdminPendingRemoval(admin)} className="rounded-lg bg-[#FFF1F2] px-2.5 py-2 text-[10px] font-bold text-[#B12D3B]">حذف</button></div>}</div><h3 className="mt-4 text-sm font-bold text-[#263E5C]">{fullName(admin)}</h3><p dir="ltr" className="mt-2 text-right text-xs text-[#718195]">{admin.email || "—"}</p><p dir="ltr" className="mt-1 text-right text-[10px] text-[#8A97A5]">{admin.phone || "—"}</p><div className="mt-3"><StatusPill tone="blue">{admin.role === "superAdmin" ? "Super Admin" : "admin"}</StatusPill></div></article>)}</div>{!dataLoading && admins.length === 0 && <div className="rounded-3xl border border-dashed border-[#C9D7E7] bg-white p-10 text-center text-xs text-[#718195]">لا توجد بيانات فريق إدارة متاحة.</div>}</section>
+          ) : activeView === "audit" && superAdmin ? (
+            <section className="space-y-6">
+              <SectionTitle eyebrow="الحوكمة والامتثال" title="سجل التدقيق" description="سجل محمي للعمليات الإدارية الحساسة؛ يعرض الفاعل والعملية والكيان وتاريخ التنفيذ من ORB مباشرة." />
+              <div className="rounded-3xl border border-[#E5EBF2] bg-white p-4 soft-shadow">
+                <div className="grid gap-3 md:grid-cols-4">
+                  <input value={auditAction} onChange={(event) => { setAuditAction(event.target.value); setAuditPage(1); }} placeholder="تصفية باسم العملية" className="h-10 rounded-xl border border-[#DCE6F0] px-3 text-xs outline-none focus:border-[#1769D5]" />
+                  <input value={auditEntityType} onChange={(event) => { setAuditEntityType(event.target.value); setAuditPage(1); }} placeholder="نوع الكيان، مثل User" className="h-10 rounded-xl border border-[#DCE6F0] px-3 text-xs outline-none focus:border-[#1769D5]" />
+                  <input dir="ltr" value={auditActorId} onChange={(event) => { setAuditActorId(event.target.value); setAuditPage(1); }} placeholder="Actor ID" className="h-10 rounded-xl border border-[#DCE6F0] px-3 text-left text-xs outline-none focus:border-[#1769D5]" />
+                  <Button type="button" disabled={auditLoading} onClick={() => void loadAuditLogs()} className="bg-[#1769D5] text-xs text-white hover:bg-[#0F56B4] disabled:opacity-60"><Search size={15} />{auditLoading ? "جارٍ التحديث…" : "تطبيق التصفية"}</Button>
+                </div>
+                {auditError && <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#F5C8CE] bg-[#FFF6F7] p-3 text-xs text-[#9B2634]"><span>{auditError}</span><button type="button" onClick={() => void loadAuditLogs()} className="font-bold underline">إعادة المحاولة</button></div>}
+                <div className="mt-5 overflow-x-auto">
+                  <Table>
+                    <TableHeader><TableRow className="border-[#EAF0F5]"><TableHead className="text-right">الوقت</TableHead><TableHead className="text-right">الفاعل</TableHead><TableHead className="text-right">العملية</TableHead><TableHead className="text-right">الكيان</TableHead></TableRow></TableHeader>
+                    <TableBody>
+                      {auditLogs.map((entry) => {
+                        const actor = typeof entry.actorId === "string" ? entry.actorId : fullName(entry.actorId);
+                        return <TableRow key={entry._id}><TableCell className="text-xs text-[#6B7B90]">{entry.createdAt ? new Date(entry.createdAt).toLocaleString("ar-EG") : "—"}</TableCell><TableCell><p className="text-xs font-bold text-[#314966]">{actor}</p><p className="mt-1 text-[10px] text-[#8A98A9]">{entry.actorRole || "—"}</p></TableCell><TableCell className="font-mono text-[11px] text-[#1769D5]">{entry.action}</TableCell><TableCell><p className="text-xs text-[#475F7A]">{entry.entityType}</p><p dir="ltr" className="mt-1 max-w-[160px] truncate text-right text-[10px] text-[#8A98A9]">{entry.entityId || "—"}</p></TableCell></TableRow>;
+                      })}
+                    </TableBody>
+                  </Table>
+                  {auditLoading ? <p className="py-8 text-center text-xs text-[#1769D5]">جارٍ تحميل سجل التدقيق…</p> : !auditError && auditLogs.length === 0 && <p className="py-8 text-center text-xs text-[#718195]">لا توجد سجلات تطابق التصفية الحالية.</p>}
+                </div>
+                <div className="mt-5 flex items-center justify-between border-t border-[#EAF0F5] pt-4"><p className="text-[10px] text-[#7C8A9B]">إجمالي السجلات: {auditPagination.total}</p><div className="flex gap-2"><Button variant="outline" size="sm" disabled={auditLoading || auditPagination.page <= 1} onClick={() => setAuditPage((current) => Math.max(1, current - 1))} className="text-xs">السابق</Button><span className="grid min-w-16 place-items-center text-[10px] text-[#62748A]">{auditPagination.page} / {auditPagination.totalPages}</span><Button variant="outline" size="sm" disabled={auditLoading || auditPagination.page >= auditPagination.totalPages} onClick={() => setAuditPage((current) => current + 1)} className="text-xs">التالي</Button></div></div>
+              </div>
+            </section>
           ) : <EmptySection section={activeTitle} />}
         </div>
       </main>
@@ -757,12 +913,16 @@ export default function Home() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(selectedDispute)} onOpenChange={(open) => { if (!open) { setSelectedDispute(null); setRefundAmount(""); } }}>
+      <Dialog open={Boolean(selectedDispute)} onOpenChange={(open) => { if (!open) { setSelectedDispute(null); setRefundAmount(""); setDisputeNote(""); } }}>
         <DialogContent dir="rtl" className="max-h-[90vh] max-w-2xl overflow-y-auto border-[#D9E5F2] bg-white p-0 text-right">
           <DialogHeader className="border-b border-[#E7EDF4] p-6 text-right"><DialogTitle className="font-display text-xl text-[#102A4B]">مراجعة وحل النزاع</DialogTitle><DialogDescription className="text-right text-xs leading-6 text-[#6C7D91]">القرار النهائي يغيّر حالة السجلات المالية ويرسل إشعاراً للطرفين؛ راجعي الأدلة قبل التأكيد.</DialogDescription></DialogHeader>
-          {selectedDispute && <div className="space-y-5 p-6"><div className="rounded-2xl bg-[#F7FAFE] p-4"><p className="text-[11px] font-bold text-[#3B5470]">{typeof selectedDispute.lessonId === "string" ? "درس مرتبط بالنزاع" : selectedDispute.lessonId?.title || "درس مرتبط بالنزاع"}</p><p className="mt-2 text-[11px] leading-6 text-[#66798F]">السبب: {selectedDispute.reason || "other"} · {selectedDispute.description || "لا يوجد وصف إضافي"}</p></div>{selectedDispute.evidence?.length ? <section><p className="mb-2 text-[11px] font-bold text-[#435873]">الأدلة المرفوعة</p><div className="flex flex-wrap gap-2">{selectedDispute.evidence.map((evidence, index) => evidence.url ? <a key={`${evidence.url}-${index}`} href={evidence.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-[#CFE0F5] bg-[#F7FAFE] px-3 py-2 text-[10px] font-bold text-[#1769D5]"><ExternalLink size={13} />دليل {index + 1}</a> : null)}</div></section> : <p className="text-[11px] text-[#8A97A5]">لا توجد أدلة مرفوعة مع هذا النزاع.</p>}<fieldset><legend className="mb-3 text-[11px] font-bold text-[#435873]">قرار الإدمن</legend><div className="grid gap-2 sm:grid-cols-3">{[{ value: "refund", label: "استرداد للطالب" }, { value: "release", label: "تحويل للمدرس" }, { value: "partial", label: "استرداد جزئي" }].map((choice) => <label key={choice.value} className={`cursor-pointer rounded-xl border p-3 text-center text-[10px] font-bold ${disputeDecision === choice.value ? "border-[#1769D5] bg-[#EAF2FF] text-[#1769D5]" : "border-[#E1E8F1] text-[#647386]"}`}><input className="sr-only" type="radio" name="dispute-decision" value={choice.value} checked={disputeDecision === choice.value} onChange={() => setDisputeDecision(choice.value as "refund" | "release" | "partial")} />{choice.label}</label>)}</div></fieldset>{disputeDecision === "partial" && <label className="block"><span className="mb-2 block text-[11px] font-bold text-[#435873]">قيمة الاسترداد الجزئي</span><input dir="ltr" value={refundAmount} onChange={(event) => setRefundAmount(event.target.value)} inputMode="decimal" placeholder="0.00" className="h-11 w-full rounded-xl border border-[#DCE6F0] bg-[#FBFDFF] px-3 text-left text-xs outline-none focus:border-[#1769D5]" /></label>}</div>}
-          <DialogFooter className="border-t border-[#E7EDF4] p-5 sm:justify-start"><Button type="button" variant="outline" onClick={() => { setSelectedDispute(null); setRefundAmount(""); }} className="border-[#D9E5F2] text-[#58708B]">إلغاء</Button><Button type="button" disabled={resolvingDispute} onClick={() => void resolveDispute()} className="bg-[#102A4B] text-white hover:bg-[#1769D5]">{resolvingDispute ? "جارٍ تسجيل القرار…" : "تأكيد حل النزاع"}</Button></DialogFooter>
+          {selectedDispute && <div className="space-y-5 p-6"><div className="rounded-2xl bg-[#F7FAFE] p-4"><p className="text-[11px] font-bold text-[#3B5470]">{typeof selectedDispute.lessonId === "string" ? "درس مرتبط بالنزاع" : selectedDispute.lessonId?.title || "درس مرتبط بالنزاع"}</p><p className="mt-2 text-[11px] leading-6 text-[#66798F]">السبب: {selectedDispute.reason || "other"} · {selectedDispute.description || "لا يوجد وصف إضافي"}</p></div>{selectedDispute.evidence?.length ? <section><p className="mb-2 text-[11px] font-bold text-[#435873]">الأدلة المرفوعة</p><div className="flex flex-wrap gap-2">{selectedDispute.evidence.map((evidence, index) => evidence.url ? <a key={`${evidence.url}-${index}`} href={evidence.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-[#CFE0F5] bg-[#F7FAFE] px-3 py-2 text-[10px] font-bold text-[#1769D5]"><ExternalLink size={13} />دليل {index + 1}</a> : null)}</div></section> : <p className="text-[11px] text-[#8A97A5]">لا توجد أدلة مرفوعة مع هذا النزاع.</p>}<fieldset><legend className="mb-3 text-[11px] font-bold text-[#435873]">قرار الإدمن</legend><div className="grid gap-2 sm:grid-cols-3">{[{ value: "refund", label: "استرداد للطالب" }, { value: "release", label: "تحويل للمدرس" }, { value: "partial", label: "استرداد جزئي" }].map((choice) => <label key={choice.value} className={`cursor-pointer rounded-xl border p-3 text-center text-[10px] font-bold ${disputeDecision === choice.value ? "border-[#1769D5] bg-[#EAF2FF] text-[#1769D5]" : "border-[#E1E8F1] text-[#647386]"}`}><input className="sr-only" type="radio" name="dispute-decision" value={choice.value} checked={disputeDecision === choice.value} onChange={() => setDisputeDecision(choice.value as "refund" | "release" | "partial")} />{choice.label}</label>)}</div></fieldset>{disputeDecision === "partial" && <label className="block"><span className="mb-2 block text-[11px] font-bold text-[#435873]">قيمة الاسترداد الجزئي</span><input dir="ltr" value={refundAmount} onChange={(event) => setRefundAmount(event.target.value)} inputMode="decimal" placeholder="0.00" className="h-11 w-full rounded-xl border border-[#DCE6F0] bg-[#FBFDFF] px-3 text-left text-xs outline-none focus:border-[#1769D5]" /></label>}<label className="block"><span className="mb-2 block text-[11px] font-bold text-[#435873]">ملاحظة قرار النزاع</span><textarea value={disputeNote} onChange={(event) => setDisputeNote(event.target.value)} rows={3} placeholder="اشرحي سبب القرار للأطراف وسجل التدقيق" className="w-full resize-none rounded-xl border border-[#DCE6F0] bg-[#FBFDFF] p-3 text-xs outline-none transition focus:border-[#1769D5]" /></label></div>}
+          <DialogFooter className="border-t border-[#E7EDF4] p-5 sm:justify-start"><Button type="button" variant="outline" onClick={() => { setSelectedDispute(null); setRefundAmount(""); setDisputeNote(""); }} className="border-[#D9E5F2] text-[#58708B]">إلغاء</Button><Button type="button" disabled={resolvingDispute} onClick={() => void resolveDispute()} className="bg-[#102A4B] text-white hover:bg-[#1769D5]">{resolvingDispute ? "جارٍ تسجيل القرار…" : "تأكيد حل النزاع"}</Button></DialogFooter>
         </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(selectedDisputedLesson)} onOpenChange={(open) => { if (!open) { setSelectedDisputedLesson(null); setLessonAdminNote(""); } }}>
+        <DialogContent dir="rtl" className="max-w-lg border-[#D9E5F2] bg-white text-right"><DialogHeader className="text-right"><DialogTitle className="font-display text-xl text-[#102A4B]">حسم الحصة المتنازع عليها</DialogTitle><DialogDescription className="text-right text-xs leading-6 text-[#6C7D91]">هذا القرار يحدد حالة الإتمام النهائية للحصة وقد يؤثر في تحرير التسوية المالية. تحققي من الوقائع ثم سجّلي السبب.</DialogDescription></DialogHeader>{selectedDisputedLesson && <div className="space-y-4"><div className="rounded-xl bg-[#F7FAFE] p-4"><p className="text-sm font-bold text-[#263E5C]">{selectedDisputedLesson.title || "حصة بلا عنوان"}</p><p className="mt-2 text-[11px] text-[#718195]">الحالة الحالية: {selectedDisputedLesson.finalCompletionStatus || selectedDisputedLesson.reviewStatus || "قيد المراجعة"}</p></div><fieldset><legend className="mb-2 block text-[11px] font-bold text-[#435873]">الحالة النهائية</legend><div className="grid grid-cols-2 gap-2"><label className={`cursor-pointer rounded-xl border p-3 text-center text-[11px] font-bold ${lessonFinalStatus === "completed" ? "border-[#1769D5] bg-[#EAF2FF] text-[#1769D5]" : "border-[#DCE6F0] text-[#607286]"}`}><input className="sr-only" type="radio" name="lesson-status" checked={lessonFinalStatus === "completed"} onChange={() => setLessonFinalStatus("completed")} />مكتملة</label><label className={`cursor-pointer rounded-xl border p-3 text-center text-[11px] font-bold ${lessonFinalStatus === "incomplete" ? "border-[#B12D3B] bg-[#FFF2F3] text-[#B12D3B]" : "border-[#DCE6F0] text-[#607286]"}`}><input className="sr-only" type="radio" name="lesson-status" checked={lessonFinalStatus === "incomplete"} onChange={() => setLessonFinalStatus("incomplete")} />غير مكتملة</label></div></fieldset><label className="block"><span className="mb-2 block text-[11px] font-bold text-[#435873]">ملاحظة الأدمن — مطلوبة</span><textarea value={lessonAdminNote} onChange={(event) => setLessonAdminNote(event.target.value)} rows={4} placeholder="اكتبي ملخص مراجعة الأدلة وسبب قرار الحسم" className="w-full resize-none rounded-xl border border-[#DCE6F0] bg-[#FBFDFF] p-3 text-xs outline-none transition focus:border-[#1769D5]" /></label></div>}<DialogFooter className="sm:justify-start"><Button type="button" variant="outline" onClick={() => { setSelectedDisputedLesson(null); setLessonAdminNote(""); }} className="border-[#D9E5F2] text-[#58708B]">إلغاء</Button><Button type="button" disabled={resolvingLesson || !lessonAdminNote.trim()} onClick={() => void resolveDisputedLesson()} className="bg-[#102A4B] text-white hover:bg-[#1769D5]">{resolvingLesson ? "جارٍ تسجيل الحسم…" : "تأكيد الحسم"}</Button></DialogFooter></DialogContent>
       </Dialog>
 
       <Dialog open={Boolean(selectedStudent)} onOpenChange={(open) => { if (!open) setSelectedStudent(null); }}>
@@ -773,15 +933,15 @@ export default function Home() {
         <DialogContent dir="rtl" className="max-w-lg border-[#D9E5F2] bg-white text-right"><DialogHeader className="text-right"><DialogTitle className="font-display text-xl text-[#102A4B]">تأكيد إتمام التحويل</DialogTitle><DialogDescription className="text-right text-xs leading-6 text-[#6C7D91]">سيتم تحويل حالة السجل إلى مكتمل وتأكيد قيود المحاسبة المرتبطة به. راجعي بيانات التحويل قبل التأكيد.</DialogDescription></DialogHeader>{selectedPayout && <div className="rounded-2xl border border-[#E1EAF3] bg-[#F7FAFE] p-4"><p className="text-[11px] text-[#708095]">معرّف التحويل</p><p dir="ltr" className="mt-1 break-all text-right text-xs font-bold text-[#263E5C]">{selectedPayout._id}</p><p className="mt-4 text-[11px] text-[#708095]">المبلغ والطريقة</p><p className="mt-1 text-sm font-bold text-[#263E5C]">{selectedPayout.amount ?? 0} · {selectedPayout.method || "—"}</p></div>}<DialogFooter className="sm:justify-start"><Button type="button" variant="outline" onClick={() => setSelectedPayout(null)} className="border-[#D9E5F2] text-[#58708B]">إلغاء</Button><Button type="button" disabled={completingPayout} onClick={() => void completePayout()} className="bg-[#147255] text-white hover:bg-[#0F5D44]">{completingPayout ? "جارٍ التأكيد…" : "تأكيد إتمام التحويل"}</Button></DialogFooter></DialogContent>
       </Dialog>
 
-      <Dialog open={adminDialogOpen} onOpenChange={setAdminDialogOpen}>
+      <Dialog open={superAdmin && adminDialogOpen} onOpenChange={setAdminDialogOpen}>
         <DialogContent dir="rtl" className="max-w-lg border-[#D9E5F2] bg-white text-right"><DialogHeader className="text-right"><DialogTitle className="font-display text-xl text-[#102A4B]">إضافة حساب أدمن</DialogTitle><DialogDescription className="text-right text-xs leading-6 text-[#6C7D91]">ينشئ ORB حساب أدمن جديداً بكلمة مرور مؤقتة، ويرسلها إلى البريد عند تفعيل خدمة الإرسال في الباك إند.</DialogDescription></DialogHeader><div className="grid gap-3 sm:grid-cols-2"><label><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">الاسم الأول</span><input value={newAdmin.firstName} onChange={(event) => setNewAdmin((current) => ({ ...current, firstName: event.target.value }))} className="h-10 w-full rounded-xl border border-[#DCE6F0] px-3 text-xs outline-none focus:border-[#1769D5]" /></label><label><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">اسم العائلة</span><input value={newAdmin.lastName} onChange={(event) => setNewAdmin((current) => ({ ...current, lastName: event.target.value }))} className="h-10 w-full rounded-xl border border-[#DCE6F0] px-3 text-xs outline-none focus:border-[#1769D5]" /></label><label className="sm:col-span-2"><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">البريد الإلكتروني</span><input dir="ltr" type="email" value={newAdmin.email} onChange={(event) => setNewAdmin((current) => ({ ...current, email: event.target.value }))} className="h-10 w-full rounded-xl border border-[#DCE6F0] px-3 text-left text-xs outline-none focus:border-[#1769D5]" /></label><label className="sm:col-span-2"><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">الهاتف — اختياري</span><input dir="ltr" value={newAdmin.phone} onChange={(event) => setNewAdmin((current) => ({ ...current, phone: event.target.value }))} className="h-10 w-full rounded-xl border border-[#DCE6F0] px-3 text-left text-xs outline-none focus:border-[#1769D5]" /></label></div><DialogFooter className="sm:justify-start"><Button type="button" variant="outline" onClick={() => setAdminDialogOpen(false)} className="border-[#D9E5F2] text-[#58708B]">إلغاء</Button><Button type="button" disabled={creatingAdmin} onClick={() => void createAdmin()} className="bg-[#1769D5] text-white hover:bg-[#0F56B4]">{creatingAdmin ? "جارٍ الإنشاء…" : "إنشاء حساب الأدمن"}</Button></DialogFooter></DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(adminPendingRemoval)} onOpenChange={(open) => { if (!open) setAdminPendingRemoval(null); }}>
+      <Dialog open={superAdmin && Boolean(adminPendingRemoval)} onOpenChange={(open) => { if (!open) setAdminPendingRemoval(null); }}>
         <DialogContent dir="rtl" className="max-w-lg border-[#F2C8CE] bg-white text-right"><DialogHeader className="text-right"><DialogTitle className="font-display text-xl text-[#A22D3A]">حذف حساب أدمن</DialogTitle><DialogDescription className="text-right text-xs leading-6 text-[#6C7D91]">هذا الإجراء يحذف الحساب المستهدف نهائياً ولا يمكن التراجع عنه من لوحة ORB.</DialogDescription></DialogHeader>{adminPendingRemoval && <div className="rounded-xl bg-[#FFF4F5] p-4"><p className="text-sm font-bold text-[#75303A]">{fullName(adminPendingRemoval)}</p><p dir="ltr" className="mt-1 text-right text-[11px] text-[#8A5960]">{adminPendingRemoval.email || "—"}</p></div>}<DialogFooter className="sm:justify-start"><Button type="button" variant="outline" onClick={() => setAdminPendingRemoval(null)} className="border-[#E6C8CD] text-[#87616A]">إلغاء</Button><Button type="button" disabled={removingAdmin} onClick={() => void removeAdmin()} className="bg-[#B12D3B] text-white hover:bg-[#94212D]">{removingAdmin ? "جارٍ الحذف…" : "تأكيد حذف الحساب"}</Button></DialogFooter></DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(editingAdmin)} onOpenChange={(open) => { if (!open) setEditingAdmin(null); }}>
+      <Dialog open={superAdmin && Boolean(editingAdmin)} onOpenChange={(open) => { if (!open) setEditingAdmin(null); }}>
         <DialogContent dir="rtl" className="max-w-lg border-[#D9E5F2] bg-white text-right"><DialogHeader className="text-right"><DialogTitle className="font-display text-xl text-[#102A4B]">تعديل بيانات الأدمن</DialogTitle><DialogDescription className="text-right text-xs leading-6 text-[#6C7D91]">يقتصر التعديل على البيانات الأساسية للحساب؛ لا يمكن تغيير الدور أو كلمة المرور من هذا المسار.</DialogDescription></DialogHeader><div className="grid gap-3 sm:grid-cols-2"><label><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">الاسم الأول</span><input value={adminEdit.firstName} onChange={(event) => setAdminEdit((current) => ({ ...current, firstName: event.target.value }))} className="h-10 w-full rounded-xl border border-[#DCE6F0] px-3 text-xs outline-none focus:border-[#1769D5]" /></label><label><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">اسم العائلة</span><input value={adminEdit.lastName} onChange={(event) => setAdminEdit((current) => ({ ...current, lastName: event.target.value }))} className="h-10 w-full rounded-xl border border-[#DCE6F0] px-3 text-xs outline-none focus:border-[#1769D5]" /></label><label className="sm:col-span-2"><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">البريد الإلكتروني</span><input dir="ltr" type="email" value={adminEdit.email} onChange={(event) => setAdminEdit((current) => ({ ...current, email: event.target.value }))} className="h-10 w-full rounded-xl border border-[#DCE6F0] px-3 text-left text-xs outline-none focus:border-[#1769D5]" /></label><label className="sm:col-span-2"><span className="mb-1.5 block text-[10px] font-bold text-[#435873]">الهاتف</span><input dir="ltr" value={adminEdit.phone} onChange={(event) => setAdminEdit((current) => ({ ...current, phone: event.target.value }))} className="h-10 w-full rounded-xl border border-[#DCE6F0] px-3 text-left text-xs outline-none focus:border-[#1769D5]" /></label></div><DialogFooter className="sm:justify-start"><Button type="button" variant="outline" onClick={() => setEditingAdmin(null)} className="border-[#D9E5F2] text-[#58708B]">إلغاء</Button><Button type="button" disabled={savingAdmin} onClick={() => void saveAdminEdit()} className="bg-[#1769D5] text-white hover:bg-[#0F56B4]">{savingAdmin ? "جارٍ الحفظ…" : "حفظ التعديلات"}</Button></DialogFooter></DialogContent>
       </Dialog>
 
