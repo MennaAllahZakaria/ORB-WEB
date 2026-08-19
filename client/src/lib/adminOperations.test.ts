@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDisputeResolution, canFinalizeTeacherReview, isLessonAdminResolved, isSuperAdminRole } from "./adminOperations";
+import { buildDisputeResolution, canAdminResolveLesson, canFinalizeTeacherReview, isLessonAdminResolved, isSuperAdminRole } from "./adminOperations";
 
 describe("admin operations", () => {
   it("creates complete refund and release decisions without a partial amount", () => {
@@ -32,5 +32,13 @@ describe("admin operations", () => {
     expect(isLessonAdminResolved("under_admin_review", undefined)).toBe(false);
     expect(isLessonAdminResolved("resolved_by_admin", undefined)).toBe(true);
     expect(isLessonAdminResolved("under_admin_review", "تم توثيق القرار")).toBe(true);
+  });
+
+  it("allows an admin decision only for lessons that are waiting for admin resolution", () => {
+    expect(canAdminResolveLesson("disputed")).toBe(true);
+    expect(canAdminResolveLesson("under_admin_review")).toBe(true);
+    expect(canAdminResolveLesson("resolved_by_admin")).toBe(false);
+    expect(canAdminResolveLesson("auto_resolved")).toBe(false);
+    expect(canAdminResolveLesson(undefined)).toBe(false);
   });
 });

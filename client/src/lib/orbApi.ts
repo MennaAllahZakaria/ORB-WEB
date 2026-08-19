@@ -22,11 +22,17 @@ export type ApiLesson = {
   _id: string;
   title?: string;
   subject?: string;
+  price?: number;
+  durationInMinutes?: number;
   status?: string;
+  paymentStatus?: string;
+  fundsStatus?: string;
   reviewStatus?: string;
   finalCompletionStatus?: string;
   disputeFlag?: boolean;
   requestedDate?: string;
+  student?: ApiUser | string;
+  acceptedTeacher?: ApiUser | string;
 };
 
 export type ApiPayout = {

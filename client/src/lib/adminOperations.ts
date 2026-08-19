@@ -8,6 +8,10 @@ export function isLessonAdminResolved(reviewStatus: string | undefined, adminNot
   return reviewStatus === "resolved_by_admin" || Boolean(adminNote?.trim());
 }
 
+export function canAdminResolveLesson(reviewStatus: string | undefined) {
+  return reviewStatus === "disputed" || reviewStatus === "under_admin_review";
+}
+
 export function buildDisputeResolution(decision: DisputeDecision, amountInput: string, noteInput = "") {
   const amount = amountInput.trim() ? Number(amountInput) : 0;
   if (decision === "partial" && (!Number.isFinite(amount) || amount <= 0)) {
