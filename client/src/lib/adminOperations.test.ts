@@ -13,9 +13,11 @@ describe("admin operations", () => {
     expect(buildDisputeResolution("partial", "125.5")).toEqual({ decision: "partial", refundAmount: 125.5, note: "" });
   });
 
-  it("requires a certificate and a rejection reason where appropriate", () => {
+  it("requires a certificate only for approval and always requires a rejection reason", () => {
     expect(canFinalizeTeacherReview(undefined, "approved", "")).toBe(false);
     expect(canFinalizeTeacherReview("https://files.example/certificate.pdf", "approved", "")).toBe(true);
+    expect(canFinalizeTeacherReview(undefined, "rejected", "")).toBe(false);
+    expect(canFinalizeTeacherReview(undefined, "rejected", "لم يتم إرفاق شهادة للتحقق")).toBe(true);
     expect(canFinalizeTeacherReview("https://files.example/certificate.pdf", "rejected", "")).toBe(false);
     expect(canFinalizeTeacherReview("https://files.example/certificate.pdf", "rejected", "صورة الشهادة غير واضحة")).toBe(true);
   });
