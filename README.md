@@ -36,6 +36,8 @@ pnpm dev
 | `pnpm build` | بناء حزمة الإنتاج. |
 | `pnpm format` | تنسيق الملفات عبر Prettier. |
 
+> يعمل `pnpm dev` على Windows وmacOS/Linux؛ إذ يستخدم المشروع `cross-env` لضبط `NODE_ENV` بدلاً من صيغة الأوامر الخاصة بـLinux.
+
 ## مثال متغيرات البيئة للواجهة
 
 > لا تضعي هنا كلمات مرور أو `DB_URI` أو مفاتيح Paymob أو Firebase أو Cloudinary. كل متغير يبدأ بـ`VITE_` يصبح متاحاً في المتصفح.
