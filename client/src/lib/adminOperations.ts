@@ -17,6 +17,6 @@ export function buildDisputeResolution(decision: DisputeDecision, amountInput: s
 }
 
 export function canFinalizeTeacherReview(certificateUrl: string | undefined, decision: "approved" | "rejected", rejectionReason: string) {
-  if (!certificateUrl) return false;
-  return decision !== "rejected" || Boolean(rejectionReason.trim());
+  if (decision === "approved") return Boolean(certificateUrl);
+  return Boolean(rejectionReason.trim());
 }
