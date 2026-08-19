@@ -1,9 +1,14 @@
 import path from "node:path";
 
 /**
- * Resolves local image assets that developers place under client/public/images.
- * The directory is served explicitly by the custom Express development server.
+ * Resolves image assets for the active runtime. Development reads the editable
+ * public folder, while the production server reads Vite's copied build output.
  */
-export function getLocalPublicImagesPath(baseDirectory = import.meta.dirname) {
-  return path.resolve(baseDirectory, "../../client/public/images");
+export function getLocalPublicImagesPath(
+  baseDirectory = import.meta.dirname,
+  nodeEnv = process.env.NODE_ENV,
+) {
+  return nodeEnv === "production"
+    ? path.resolve(baseDirectory, "public/images")
+    : path.resolve(baseDirectory, "../../client/public/images");
 }
