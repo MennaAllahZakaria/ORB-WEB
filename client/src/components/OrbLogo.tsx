@@ -18,7 +18,7 @@ export default function OrbLogo({
   return (
     <div className={`flex items-center gap-3 ${className}`}>
       <img
-        src="/manus-storage/orb-official-logo_bf763485.png"
+        src="/images/orb-official-logo.png"
         alt="شعار ORB الرسمي"
         className={`h-11 w-11 shrink-0 object-contain ${imageClassName}`}
       />

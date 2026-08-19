@@ -710,7 +710,7 @@ export default function Home() {
               {dataError && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#F5C8CE] bg-[#FFF6F7] px-4 py-3 text-xs text-[#9B2634]"><span>تعذر تحميل بيانات ORB: {dataError}</span><button type="button" onClick={() => void loadDashboardData()} className="font-bold underline">إعادة المحاولة</button></div>}
               <div className="orb-enter relative overflow-hidden rounded-[26px] bg-[#102A4B] p-6 text-white sm:p-8 lg:p-10">
                 <div className="absolute inset-y-0 left-0 hidden w-[48%] lg:block">
-                  <img src="/manus-storage/orb-operations-hero_08667843.jpg" alt="نظام ORB التعليمي" className="h-full w-full object-cover opacity-90 mix-blend-screen" />
+                  <img src="/images/orb-operations-hero.jpg" alt="نظام ORB التعليمي" className="h-full w-full object-cover opacity-90 mix-blend-screen" />
                   <div className="absolute inset-0 bg-gradient-to-l from-[#102A4B] via-[#102A4B]/45 to-transparent" />
                 </div>
                 <div className="relative max-w-2xl">
@@ -817,7 +817,7 @@ export default function Home() {
 
                 <aside className="space-y-6">
                   <article className="relative overflow-hidden rounded-3xl border border-[#E5EBF2] bg-white p-5 soft-shadow">
-                    <img src="/manus-storage/orb-approval-illustration_0fbc4396.jpg" alt="مراجعة طلب انضمام مدرس" className="absolute inset-y-0 left-0 w-[47%] object-cover opacity-20" />
+                    <img src="/images/orb-approval-illustration.jpg" alt="مراجعة طلب انضمام مدرس" className="absolute inset-y-0 left-0 w-[47%] object-cover opacity-20" />
                     <div className="relative">
                       <div className="flex items-center justify-between"><span className="grid h-9 w-9 place-items-center rounded-xl bg-[#FFF4D7] text-[#B87900]"><Clock3 size={18} /></span><StatusPill tone="gold">أولوية اليوم</StatusPill></div>
                       <h3 className="font-display mt-5 max-w-[230px] text-xl font-bold leading-8 text-[#102A4B]">{dashboardSummary?.counts.pendingTeachers ?? teachers.length} طلب تحقق ينتظر المراجعة</h3>
@@ -843,7 +843,7 @@ export default function Home() {
                   <p className="mt-5 text-[10px] leading-6 text-[#718095]">لا يقدم ORB API الحالي سلسلة زمنية يومية؛ لذلك تعرض هذه المساحة مؤشرات التشغيل الفعلية المتاحة الآن بدلاً من رسم تقديري.</p>
                 </article>
                 <article className="relative min-h-[245px] overflow-hidden rounded-3xl bg-[#EAF2FF] p-6">
-                  <img src="/manus-storage/orb-resources-illustration_552a2a10.jpg" alt="موارد تعليمية" className="absolute inset-y-0 left-0 w-[48%] object-cover mix-blend-multiply opacity-85" />
+                  <img src="/images/orb-resources-illustration.jpg" alt="موارد تعليمية" className="absolute inset-y-0 left-0 w-[48%] object-cover mix-blend-multiply opacity-85" />
                   <div className="relative max-w-[58%]"><StatusPill tone="blue">مصدر البيانات</StatusPill><h3 className="font-display mt-4 text-xl font-bold leading-8 text-[#102A4B]">اتصال Railway نشط</h3><p className="mt-2 text-[10px] leading-6 text-[#5D718C]">تظهر المؤشرات وقوائم المدرسين والطلاب والدروس والتحويلات من ORB API مباشرة.</p><button type="button" onClick={() => void loadDashboardData()} className="mt-4 inline-flex items-center gap-2 text-[10px] font-bold text-[#1769D5]">تحديث البيانات <ChevronLeft size={14} /></button></div>
                 </article>
               </section>
