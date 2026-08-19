@@ -3,11 +3,11 @@ import express from "express";
 import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
-import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { getLocalPublicImagesPath } from "./publicAssets";
+import { isManusOAuthConfigured } from "./runtimeConfig";
 import { serveStatic, setupVite } from "./vite";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -38,7 +38,13 @@ async function startServer() {
   // Explicitly serve developer-owned local images before the custom Vite fallback.
   app.use("/images", express.static(getLocalPublicImagesPath()));
   registerStorageProxy(app);
-  registerOAuthRoutes(app);
+  if (isManusOAuthConfigured()) {
+    const { registerOAuthRoutes } = await import("./oauth");
+    registerOAuthRoutes(app);
+  } else {
+    console.log("[OAuth] Manus OAuth routes are disabled; ORB Railway authentication remains available.");
+  }
+  app.get("/health", (_req, res) => res.status(200).json({ status: "ok" }));
   // tRPC API
   app.use(
     "/api/trpc",
@@ -61,7 +67,7 @@ async function startServer() {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
 
-  server.listen(port, () => {
+  server.listen(port, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${port}/`);
   });
 }
